@@ -1,0 +1,526 @@
+<?php
+
+namespace App\Http\Controllers\API\representatives;
+
+use App\Events\SendNotificationEvent;
+use App\Helpers\ApiResponse;
+use App\Http\Controllers\Controller;
+use App\Http\Resources\AppointmentsResource;
+use App\Http\Resources\DoctorResource;
+use App\Http\Resources\NotificationsResource;
+use App\Http\Resources\RepsResource;
+use App\Http\Resources\SpecialtiesResource;
+use App\Models\Appointment;
+use App\Models\Company;
+use App\Models\DoctorBlock;
+use App\Models\Doctors;
+use App\Models\Notification;
+use App\Models\Representative;
+use App\Models\Specialty;
+use App\Services\AppointmentCancellationAndBookedService;
+use Carbon\Carbon;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
+
+class RepsController extends Controller
+{
+
+    public function getRepsProfile()
+    {
+        $rep = auth()->user();
+
+        if ($rep) {
+            return ApiResponse::sendResponse(200, 'Representative Profile fetched successfully', new RepsResource($rep->load(['company', 'areas', 'lines'])));
+        }
+
+        return ApiResponse::sendResponse(404, 'Representative not found', []);
+    }
+
+    public function getDoctorProfile($doctor_id)
+    {
+        $doctor = Doctors::with(['specialty', 'availableTimes'])->find($doctor_id);
+
+        if (!$doctor) {
+            return ApiResponse::sendResponse(404, 'Doctor not found', []);
+        }
+
+        return ApiResponse::sendResponse(200, 'Doctor Profile fetched successfully', new DoctorResource($doctor));
+    }
+
+    public function getAvailableTimeForDoctor()
+    {
+        $representative = auth()->user();
+        $doctors = Doctors::with([
+            'specialty',
+            'availableTimes',
+            'favoredByReps' => function ($query) {
+                $query->where('representative_id', auth()->id());
+            }
+        ])
+            ->whereDoesntHave('blocks', function ($q) use ($representative) {
+                $q->where(function ($sub) use ($representative) {
+                    $sub->where('blockable_type', Representative::class)
+                        ->where('blockable_id', $representative->id);
+                })->orWhere(function ($sub) use ($representative) {
+                    $sub->where('blockable_type', Company::class)
+                        ->where('blockable_id', $representative->company_id);
+                });
+            })
+            ->get();
+
+        if ($doctors->isNotEmpty()) {
+            return ApiResponse::sendResponse(200, 'Doctors found Successfully', DoctorResource::collection($doctors));
+        }
+
+        return ApiResponse::sendResponse(200, 'Doctors Not Found', []);
+    }
+
+    public function get_Speciality(Request $request)
+    {
+        // dd($doctor);
+        $specialities = Specialty::all();
+
+        if ($specialities) {
+            return ApiResponse::sendResponse(200, 'Speciality Found', SpecialtiesResource::collection($specialities));
+        }
+        return ApiResponse::sendResponse(200, 'Speciality Not Found', []);
+    }
+
+    public function filterDoctors(Request $request)
+    {
+        $rep = $request->user();
+        $filters = $request->only(['name', 'location', 'specialty_id']);
+
+        $doctors = Doctors::with(['specialty'])
+            ->filter($filters)
+            ->whereDoesntHave('blocks', function ($q) use ($rep) {
+                $q->where(function ($q2) use ($rep) {
+                    $q2->where('blockable_type', 'representative')
+                        ->where('blockable_id', $rep->id);
+                })
+                    ->orWhere(function ($q2) use ($rep) {
+                        $q2->where('blockable_type', 'company')
+                            ->where('blockable_id', $rep->company_id);
+                    });
+            })->get();
+
+
+
+
+        if ($doctors->isEmpty()) {
+            return ApiResponse::sendResponse(404, 'No doctors found', []);
+        }
+
+        return ApiResponse::sendResponse(200, 'Doctors filtered successfully', DoctorResource::collection($doctors));
+    }
+
+    public function bookAppointment(Request $request)
+    {
+
+        $validated = Validator::make($request->all(), [
+            'doctors_id' => 'required|exists:doctors,id',
+            'start_time' => 'required',
+        ]);
+
+
+
+        if ($validated->fails()) {
+            // return ApiResponse::sendResponse(422, 'Validation Error', $validated->messages()->all());
+            return ApiResponse::sendResponse(422, $validated->messages()->first(), []);
+        }
+
+        $date = $request->date;
+        $start = Carbon::parse($date . ' ' . $request->start_time);
+        $end = $start->copy()->addMinutes(5);
+
+
+        // Check if there datetime booked
+        $pendingAppointment = Appointment::where('doctors_id', $request->doctors_id)
+            ->where('date', $date)
+            ->where(function ($query) use ($start, $end) {
+                $query->where(function ($q) use ($start, $end) {
+                    $q->where(DB::raw("CONCAT(date, ' ', start_time)"), '<', $end)
+                        ->where(DB::raw("CONCAT(date, ' ', end_time)"), '>', $start);
+                });
+            })
+            ->where('status', 'pending')
+            ->exists();
+
+        // dd($exists);
+
+        if ($pendingAppointment) {
+            return ApiResponse::sendResponse(409, 'This time slot is already booked by another representative and is pending confirmation.', []);
+        }
+
+        // Check if how many appointments each company has today
+        $today = Carbon::now();
+        $date_Check = $today->toDateString();
+
+        // Get the count of appointments for the company on the current date
+        $companyId = auth()->user()->company_id;
+        $representativeId = auth()->user()->id;
+
+        $appointmentCount = Appointment::where('representative_id', $representativeId)
+            ->where('status', 'pending')
+            ->OrWhere('status', 'confirmed')
+            ->whereDate('date', $date_Check)
+            ->count();
+
+        // Check if the company has reached its daily limit
+        $maxAppointmentsPerDay = auth()->user()->company->visits_per_day;
+
+        if ($appointmentCount >= $maxAppointmentsPerDay) {
+            return ApiResponse::sendResponse(403, 'You have reached the maximum number of appointments allowed for today', []);
+        }
+
+        if ($date_Check > $date) {
+            return ApiResponse::sendResponse(422, 'Cannot book an appointment in the past', []);
+        }
+
+        // Check if doctor is busy
+        $doctor = Doctors::findOrFail($request->doctors_id);
+        $bookingDate = Carbon::parse($date)->toDateString();
+        $from = Carbon::parse($doctor->from_date)->toDateString();
+        $to = Carbon::parse($doctor->to_date)->toDateString();
+        // remember between(from, to) 
+        if ($doctor->status === 'busy' && $bookingDate >= $from && $bookingDate <= $to) {
+            return ApiResponse::sendResponse(403,'Doctor is busy during the selected period',[]);
+        }
+
+        $DoctorBlocks = DoctorBlock::where('doctors_id', $request->doctors_id)->get();
+        $representative = $request->user();
+
+        foreach ($DoctorBlocks as $block) {
+            if ($block->blockable_type === 'App\Models\Representative' && $block->blockable_id == $representative->id) {
+                return ApiResponse::sendResponse(403, 'You are blocked by this doctor', []);
+            }
+            if ($block->blockable_type === 'App\Models\Company' && $block->blockable_id == $representative->company_id) {
+                return ApiResponse::sendResponse(403, 'Your company is blocked by this doctor', []);
+            }
+        }
+
+        $company = Company::find($companyId);
+        if ($company->status === 'inactive') {
+            return ApiResponse::sendResponse(403, 'Your company is inactive. You cannot book appointments.', []);
+        }
+        $appointmentStatusWithDoctor = Appointment::where('doctors_id', $request->doctors_id)
+            ->where('representative_id', auth()->id())
+            ->whereIn('status', ['pending'])
+            ->first();
+
+
+        if ($appointmentStatusWithDoctor) {
+            return ApiResponse::sendResponse(403, 'You cannot book appointment with this doctor, because you have previous book not completed', []);
+        }
+        $appointment = Appointment::create([
+            'doctors_id' => $request->doctors_id,
+            'representative_id' => auth()->id(),
+            'start_time' => $start,
+            'end_time' => $end,
+            'date' => $date,
+            'status' => "pending",
+            'company_id' => auth()->user()->company_id
+
+        ]);
+        $appointment->load(['doctor', 'representative', 'company']);
+
+        $doctor = $appointment->doctor;
+        $dateTime = $start->format('Y-m-d h:i a');
+
+        event(new SendNotificationEvent($doctor, 'New visit booked.', 'New visit booked with ' . auth()->user()->name . ' at ' . $dateTime, 'doctor'));
+		
+      	\Log::info('Appointment booked, event fired', [
+    		'doctor_id' => $doctor->id,
+    		'doctor_token' => $doctor->fcm_token,
+		]);
+      
+      
+        return ApiResponse::sendResponse(201, 'Appointment booked successfully', new AppointmentsResource($appointment));
+    }
+
+    public function getRepsAppointments()
+    {
+        $rep = auth()->user()->id;
+        // dd($rep);
+        $appointments = Appointment::with(['representative', 'doctor'])
+            ->where('representative_id', $rep)
+            ->orderBy('date', 'asc')
+            ->get();
+
+        if ($appointments->isNotEmpty()) {
+            return ApiResponse::sendResponse(200, 'Booked Appointments fetched successfully', AppointmentsResource::collection($appointments));
+        }
+        return ApiResponse::sendResponse(200, 'Appointments Not Found', []);
+    }
+
+    public function completedBooking($book_id, AppointmentCancellationAndBookedService $service)
+    {
+        $reps = auth()->user();
+
+        return $service->completed($book_id, $reps);
+    }
+    public function cancellationBooking($book_id, AppointmentCancellationAndBookedService $service)
+    {
+        $reps = auth()->user();
+
+        return $service->cancel($book_id, $reps);
+    }
+
+    public function deleteAppointment($book_id)
+    {
+        $reps = auth()->user();
+
+        $appointment = Appointment::where('id', $book_id)
+            ->where('representative_id', $reps->id)
+            ->first();
+
+        if (!$appointment) {
+            return ApiResponse::sendResponse(404, 'Appointment not found or not yours', []);
+        }
+
+        $appointment->delete();
+
+        return ApiResponse::sendResponse(200, 'Appointment deleted successfully', []);
+    }
+
+    public function getNotifications()
+    {
+        $reps = auth()->user();
+        $notifications = $reps->notifications()
+            ->orderBy('created_at', 'desc')
+            ->get();
+        return ApiResponse::sendResponse(200, 'Notifications fetched successfully', NotificationsResource::collection($notifications));
+    }
+    public function markNotificationAsRead($notification_id)
+    {
+        $reps = auth()->user();
+
+        $notification = Notification::where('id', $notification_id)
+            ->where('notifiable_id', $reps->id)
+            ->where('notifiable_type', Representative::class)
+            ->first();
+
+        if (!$notification) {
+            return ApiResponse::sendResponse(404, 'Notification not found or not yours', []);
+        }
+
+        $notification->update(['is_read' => true]);
+
+        return ApiResponse::sendResponse(200, 'Notification marked as read successfully', new NotificationsResource($notification));
+    }
+
+    public function deleteNotification($notification_id)
+    {
+        $reps = auth()->user();
+
+        $notification = Notification::where('id', $notification_id)
+            ->where('notifiable_id', $reps->id)
+            ->where('notifiable_type', Representative::class)
+            ->first();
+
+        if (!$notification) {
+            return ApiResponse::sendResponse(404, 'Notification not found or not yours', []);
+        }
+
+        $notification->delete();
+
+        return ApiResponse::sendResponse(200, 'Notification deleted successfully', []);
+    }
+
+    public function clearAllNotifications(Request $request)
+    {
+        $reps = auth()->user();
+        // dd($doctor);
+
+        $reps->notifications()->delete();
+
+        return ApiResponse::sendResponse(200, 'All notifications cleared successfully', []);
+    }
+
+    public function getAppointmentsByStatus(Request $request)
+    {
+        $reps = auth()->user()->id;
+
+        $status = $request->input('status'); // could be "pending", "completed", etc.
+
+        $appointments = Appointment::query()
+            ->when($status, function ($query, $status) use ($reps) {
+                $query->where('representative_id', $reps);
+                $query->where('status', $status);
+            })
+            ->get();
+        // dd($appointments);
+        if (isset($appointments)) {
+            return ApiResponse::sendResponse(200, 'Appointments fetched successfully', AppointmentsResource::collection($appointments));
+        }
+        return ApiResponse::sendResponse(200, 'Not found', []);
+    }
+
+    public function changeAppointmentStatus(Request $request, AppointmentCancellationAndBookedService $service)
+    {
+        $reps = auth()->user();
+        $appointmentId = $request->appointment_id;
+        return $service->changeStatus($appointmentId, $reps);
+    }
+
+    public function getDoctorsBySpeciality(Request $request)
+    {
+        $representative = auth()->user();
+        $speciality_id = $request->input('specialty_id');
+
+        $doctors = Doctors::with('specialty')
+            ->when($speciality_id, function ($query, $speciality_id) {
+                $query->where('specialty_id', $speciality_id);
+            })
+            ->whereDoesntHave('blocks', function ($q) use ($representative) {
+                $q->where(function ($sub) use ($representative) {
+                    $sub->where('blockable_type', Representative::class)
+                        ->where('blockable_id', $representative->id);
+                })->orWhere(function ($sub) use ($representative) {
+                    $sub->where('blockable_type', Company::class)
+                        ->where('blockable_id', $representative->company_id);
+                });
+            })
+            ->get();
+
+        if ($doctors->isNotEmpty()) {
+            return ApiResponse::sendResponse(200, 'Doctors fetched successfully', DoctorResource::collection($doctors));
+        }
+
+        return ApiResponse::sendResponse(200, 'No doctors found', []);
+    }
+
+    public function getCancelledAppointments()
+    {
+        $representative = auth()->user()->id;
+        // dd($representative);
+        $appointments = Appointment::with(['representative', 'doctor'])
+            ->where('representative_id', $representative)
+            ->where('status', 'cancelled')
+            ->orderBy('date', 'asc')
+            ->orderBy('start_time', 'asc')
+            ->get();
+        // dd($appointments);
+        if ($appointments->isNotEmpty()) {
+            return ApiResponse::sendResponse(200, 'Cancelled Appointments fetched successfully', AppointmentsResource::collection($appointments));
+        }
+        return ApiResponse::sendResponse(200, 'Cancelled Appointments Not Found', []);
+    }
+
+    public function getPendingAppointments()
+    {
+        $representative = auth()->user()->id;
+        // dd($representative);
+        $appointments = Appointment::with(['representative', 'doctor'])
+            ->where('representative_id', $representative)
+            ->where('status', 'pending')
+            ->orderBy('date', 'asc')
+            ->orderBy('start_time', 'asc')
+            ->get();
+        // dd($appointments);
+        if ($appointments->isNotEmpty()) {
+            return ApiResponse::sendResponse(200, 'Pending Appointments fetched successfully', AppointmentsResource::collection($appointments));
+        }
+        return ApiResponse::sendResponse(200, 'Pending Appointments Not Found', []);
+    }
+
+    public function getConfirmedAppointments()
+    {
+        $representative = auth()->user()->id;
+        // dd($representative);
+        $appointments = Appointment::with(['representative', 'doctor'])
+            ->where('representative_id', $representative)
+            ->where('status', 'confirmed')
+            ->orderBy('date', 'asc')
+            ->orderBy('start_time', 'asc')
+            ->get();
+        // dd($appointments);
+        if ($appointments->isNotEmpty()) {
+            return ApiResponse::sendResponse(200, 'Confirmed Appointments fetched successfully', AppointmentsResource::collection($appointments));
+        }
+        return ApiResponse::sendResponse(200, 'Confirmed Appointments Not Found', []);
+    }
+
+    public function getLeftingAppointments()
+    {
+        $representative = auth()->user()->id;
+        // dd($representative);
+        $appointments = Appointment::with(['representative', 'doctor'])
+            ->where('representative_id', $representative)
+            ->orderBy('date', 'asc')
+            ->orderBy('start_time', 'asc')
+            ->get();
+        // dd($appointments);
+        if ($appointments->isNotEmpty()) {
+            return ApiResponse::sendResponse(200, 'Lefting Appointments fetched successfully', AppointmentsResource::collection($appointments));
+        }
+        return ApiResponse::sendResponse(200, 'Lefting Appointments Not Found', []);
+    }
+
+    public function filterAppointmentsByDateAndSpecialty(Request $request)
+    {
+        $representative = auth()->user()->id;
+        $date = $request->input('date');
+        $specialty_id = $request->input('specialty_id');
+
+        $appointments = Appointment::with(['representative', 'doctor'])
+            ->where('representative_id', $representative)
+            ->when($date, function ($query, $date) {
+                $query->where('date', $date);
+            })
+            ->when($specialty_id, function ($query, $specialty_id) {
+                $query->whereHas('doctor', function ($q) use ($specialty_id) {
+                    $q->where('specialty_id', $specialty_id);
+                });
+            })
+            ->orderBy('date', 'asc')
+            ->orderBy('start_time', 'asc')
+            ->get();
+
+        if ($appointments->isNotEmpty()) {
+            return ApiResponse::sendResponse(200, 'Filtered Appointments fetched successfully', AppointmentsResource::collection($appointments));
+        }
+        return ApiResponse::sendResponse(200, 'Filtered Appointments Not Found', []);
+    }
+
+    public function getSuspendedAppointments()
+    {
+        $representative = auth()->user()->id;
+        // dd($representative);
+        $appointments = Appointment::with(['representative', 'doctor'])
+            ->where('representative_id', $representative)
+            ->where('status', 'suspended')
+            ->orderBy('date', 'asc')
+            ->orderBy('start_time', 'asc')
+            ->get();
+        // dd($appointments);
+        if ($appointments->isNotEmpty()) {
+            return ApiResponse::sendResponse(200, 'Suspended Appointments fetched successfully', AppointmentsResource::collection($appointments));
+        }
+        return ApiResponse::sendResponse(200, 'Suspended Appointments Not Found', []);
+    }
+
+    // public function getAppointmentsNowAndBeforeTwoDay()
+    // {
+    //     $representativeId = auth()->id();
+
+    //     $appointments = Appointment::with(['representative', 'doctor'])
+    //         ->where('representative_id', $representativeId)
+    //         ->whereRaw("
+    //         TIMESTAMPDIFF(HOUR, CONCAT(date, ' ', start_time), NOW()) <= 48
+    //     ") 
+    //         ->whereRaw("
+    //         TIMESTAMPDIFF(HOUR, CONCAT(date, ' ', start_time), NOW()) >= 0
+    //     ") 
+    //         ->orderBy('date', 'asc')
+    //         ->orderBy('start_time', 'asc')
+    //         ->get();
+
+    //     if ($appointments->isNotEmpty()) {
+    //         return ApiResponse::sendResponse(200, 'Appointments fetched successfully', AppointmentsResource::collection($appointments));
+    //     }
+
+    //     return ApiResponse::sendResponse(200, 'Appointments Not Found', []);
+    // }
+}
