@@ -11,9 +11,15 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('representatives', function (Blueprint $table) {
-            $table->text('fcm_token')->nullable();
-        });
+        if (!Schema::hasTable('representatives')) {
+            return;
+        }
+
+        if (!Schema::hasColumn('representatives', 'fcm_token')) {
+            Schema::table('representatives', function (Blueprint $table) {
+                $table->text('fcm_token')->nullable();
+            });
+        }
     }
 
     /**
@@ -21,8 +27,10 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('representatives', function (Blueprint $table) {
-            $table->dropColumn('fcm_token');
-        });
+        if (Schema::hasTable('representatives') && Schema::hasColumn('representatives', 'fcm_token')) {
+            Schema::table('representatives', function (Blueprint $table) {
+                $table->dropColumn('fcm_token');
+            });
+        }
     }
 };
