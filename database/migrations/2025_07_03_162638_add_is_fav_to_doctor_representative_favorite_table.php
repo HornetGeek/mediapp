@@ -11,9 +11,15 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('doctor_representative_favorite', function (Blueprint $table) {
-            $table->boolean('is_fav')->default(false)->after('doctors_id');
-        });
+        if (!Schema::hasTable('doctor_representative_favorite')) {
+            return;
+        }
+
+        if (!Schema::hasColumn('doctor_representative_favorite', 'is_fav')) {
+            Schema::table('doctor_representative_favorite', function (Blueprint $table) {
+                $table->boolean('is_fav')->default(false)->after('doctors_id');
+            });
+        }
     }
 
     /**
@@ -21,8 +27,10 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('doctor_representative_favorite', function (Blueprint $table) {
-            $table->dropColumn('is_fav');
-        });
+        if (Schema::hasTable('doctor_representative_favorite') && Schema::hasColumn('doctor_representative_favorite', 'is_fav')) {
+            Schema::table('doctor_representative_favorite', function (Blueprint $table) {
+                $table->dropColumn('is_fav');
+            });
+        }
     }
 };
