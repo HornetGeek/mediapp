@@ -11,6 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasTable('feedback_emails')) {
+            return;
+        }
+
         Schema::create('feedback_emails', function (Blueprint $table) {
             $table->id();
             $table->string('email_feedback')->unique()->nullable();
