@@ -52,7 +52,18 @@ class AuthAdminController extends Controller
     }
     public function logout(Request $request)
     {
-        $request->user()->currentAccessToken()->delete(); //or using tokens instead of currentAccessToken
+        $company = $request->user();
+        if ($company) {
+            $company->fcm_token = null;
+            $company->save();
+
+            $currentToken = $company->currentAccessToken();
+            if ($currentToken) {
+                $currentToken->delete();
+            }
+        }
+
+        //or using tokens instead of currentAccessToken
         // $request->user()->tokens()->delete(); // this will delete all tokens of the user
         return ApiResponse::sendResponse(200, 'Company Logged Out Successfully', []);
     }

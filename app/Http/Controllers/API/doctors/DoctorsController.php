@@ -5,12 +5,12 @@ namespace App\Http\Controllers\API\doctors;
 use App\Events\SendNotificationEvent;
 use App\Helpers\ApiResponse;
 use App\Http\Controllers\Controller;
-use App\Http\Resources\AppointmentsResource;
 use App\Http\Resources\AvailableTimeResource;
 use App\Http\Resources\BlockedCompanyResource;
 use App\Http\Resources\BlockedRepsResource;
 use App\Http\Resources\BlockSearchResource;
 use App\Http\Resources\DoctorResource;
+use App\Http\Resources\DoctorAppointmentsResource;
 use App\Http\Resources\FiltersResource;
 use App\Http\Resources\NotificationsResource;
 use App\Http\Resources\SpecialtiesResource;
@@ -309,17 +309,31 @@ class DoctorsController extends Controller
     //     return ApiResponse::sendResponse(200, 'Availabilities copied from last month', AvailableTimeResource::collection($updatedAvailabilities));
     // }
 
-    public function getDoctorAppointments()
+    public function getDoctorAppointments(Request $request)
     {
+        $validator = Validator::make($request->all(), [
+            'status' => ['nullable', 'in:cancelled,confirmed,pending,left,suspended'],
+        ], [], [
+            'status' => 'Status',
+        ]);
+
+        if ($validator->fails()) {
+            return ApiResponse::sendResponse(422, $validator->messages()->first(), []);
+        }
+
         $doctor = auth()->user()->id;
-        // dd($doctor);
-        $appointments = Appointment::with(['representative', 'doctor'])
+
+        $appointments = Appointment::with(['representative', 'doctor', 'company'])
             ->where('doctors_id', $doctor)
+            ->when($request->filled('status'), function ($query) use ($request) {
+                $query->where('status', $request->status);
+            })
             ->orderBy('date', 'asc')
+            ->orderBy('start_time', 'asc')
             ->get();
-        // dd($appointments);
+
         if ($appointments->isNotEmpty()) {
-            return ApiResponse::sendResponse(200, 'Appointments fetched successfully', AppointmentsResource::collection($appointments));
+            return ApiResponse::sendResponse(200, 'Appointments fetched successfully', DoctorAppointmentsResource::collection($appointments));
         }
         return ApiResponse::sendResponse(200, 'Appointments Not Found', []);
     }
@@ -353,7 +367,7 @@ class DoctorsController extends Controller
         // $service->sendNotification($reps->fcm_token, $notify->title, $notify->body);
         event(new SendNotificationEvent($reps, 'Visit Cancelled by Doctor', 'Your visit with Dr.' . $doctor->name . ' has been cancelled', 'reps'));
 
-        return ApiResponse::sendResponse(200, 'Appointment cancelled successfully', new AppointmentsResource($appointment));
+        return ApiResponse::sendResponse(200, 'Appointment cancelled successfully', new DoctorAppointmentsResource($appointment));
     }
 
     public function filterAppointments(Request $request)
@@ -661,7 +675,7 @@ class DoctorsController extends Controller
             ->get();
         // dd($appointments);
         if ($appointments->isNotEmpty()) {
-            return ApiResponse::sendResponse(200, 'Cancelled Appointments fetched successfully', AppointmentsResource::collection($appointments));
+            return ApiResponse::sendResponse(200, 'Cancelled Appointments fetched successfully', DoctorAppointmentsResource::collection($appointments));
         }
         return ApiResponse::sendResponse(200, 'Cancelled Appointments Not Found', []);
     }
@@ -678,7 +692,7 @@ class DoctorsController extends Controller
             ->get();
         // dd($appointments);
         if ($appointments->isNotEmpty()) {
-            return ApiResponse::sendResponse(200, 'Pending Appointments fetched successfully', AppointmentsResource::collection($appointments));
+            return ApiResponse::sendResponse(200, 'Pending Appointments fetched successfully', DoctorAppointmentsResource::collection($appointments));
         }
         return ApiResponse::sendResponse(200, 'Pending Appointments Not Found', []);
     }
@@ -695,7 +709,7 @@ class DoctorsController extends Controller
             ->get();
         // dd($appointments);
         if ($appointments->isNotEmpty()) {
-            return ApiResponse::sendResponse(200, 'Confirmed Appointments fetched successfully', AppointmentsResource::collection($appointments));
+            return ApiResponse::sendResponse(200, 'Confirmed Appointments fetched successfully', DoctorAppointmentsResource::collection($appointments));
         }
         return ApiResponse::sendResponse(200, 'Confirmed Appointments Not Found', []);
     }

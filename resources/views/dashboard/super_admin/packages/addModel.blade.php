@@ -36,11 +36,14 @@
                                 @enderror
                             </div>
                             <div class="form-group">
-                                <label class="form-label">Duration (in days)</label>
-                                <input type="number"
-                                    class="form-control @error('duration') is-invalid @enderror"
-                                    value="{{ old('duration') }}" name="duration">
-                                @error('duration')
+                                <label class="form-label">Subscription Plan</label>
+                                <select class="form-select @error('plan_type') is-invalid @enderror" name="plan_type" required>
+                                    <option value="">Select plan</option>
+                                    <option value="quarterly" {{ old('plan_type') === 'quarterly' ? 'selected' : '' }}>Quarterly</option>
+                                    <option value="semi_annual" {{ old('plan_type') === 'semi_annual' ? 'selected' : '' }}>Semi-Annual</option>
+                                    <option value="annual" {{ old('plan_type') === 'annual' ? 'selected' : '' }}>Annual</option>
+                                </select>
+                                @error('plan_type')
                                     <div class="alert alert-danger">{{ $message }}</div>
                                 @enderror
                             </div>

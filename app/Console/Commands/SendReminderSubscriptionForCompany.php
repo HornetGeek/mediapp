@@ -20,27 +20,26 @@ class SendReminderSubscriptionForCompany extends Command
     {
         Log::info('Cron company:subscription-reminder started at ' . now());
 
-        $now = Carbon::now();
-        $targetDate = $now->copy()->addDays(15);
+        $targetDate = Carbon::today()->addDays(15);
 
-        $companies = Company::whereBetween('subscription_end', [$now, $targetDate])
+        $companies = Company::whereDate('subscription_end', $targetDate)
+            ->where('status', 'active')
             ->whereNotNull('fcm_token')
             ->get();
-        // $targetDate = Carbon::now()->addDays(15)->startOfDay();
-
-        // $companies = Company::whereDate('subscription_end', $targetDate)
-        //     ->whereNotNull('fcm_token')
-        //     ->get();
 
         foreach ($companies as $company) {
+            $endDate = Carbon::parse($company->subscription_end)->toDateString();
+            $dedupeKey = "subscription_reminder:company:{$company->id}:end:{$endDate}:d15";
+
             event(new SendNotificationEvent(
                 $company,
                 'Subscription expiration reminder',
                 'Your subscription will expire in 15 days. Please renew to avoid service interruption.',
-                'company'
+                'company',
+                [],
+                $dedupeKey
             ));
         }
-        Log::info('Now: ' . $now->toDateString());
         Log::info('Target Date: ' . $targetDate->toDateString());
         Log::info('Companies count: ' . $companies->count());
         Log::info('Cron company:subscription-reminder finished at ' . now());

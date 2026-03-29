@@ -23,8 +23,21 @@ class SuperadminController extends Controller
         $totalDoctors = Doctors::count();
         $totalCompanies = Company::count();
         $feedback_email = FeedbackEmail::first();
-        $versions = AppVersion::pluck('version', 'app_type');
-        $forced   = AppVersion::pluck('is_forced', 'app_type');
+        $settings = AppVersion::whereIn('app_type', AppVersion::SUPPORTED_APP_TYPES)
+            ->whereIn('platform', AppVersion::SUPPORTED_PLATFORMS)
+            ->get()
+            ->keyBy(fn (AppVersion $version) => "{$version->app_type}.{$version->platform}");
+
+        $versions = [];
+        $forced = [];
+        foreach (AppVersion::SUPPORTED_APP_TYPES as $appType) {
+            foreach (AppVersion::SUPPORTED_PLATFORMS as $platform) {
+                $key = "{$appType}.{$platform}";
+                $versions[$appType][$platform] = $settings[$key]->version ?? '';
+                $forced[$appType][$platform] = (int) ($settings[$key]->is_forced ?? 0);
+            }
+        }
+
         $data = [
             'total_doctors' => $totalDoctors,
             'total_companies' => $totalCompanies,
@@ -33,7 +46,7 @@ class SuperadminController extends Controller
             'cancelled_visits' => $cancelledVisits,
             'feedback_email' => $feedback_email ? $feedback_email->email_feedback : null,
             'versions' => $versions,
-            'forced' => $forced
+            'forced' => $forced,
         ];
 
         return view('dashboard.super_admin.index', compact('data'));
@@ -59,21 +72,44 @@ class SuperadminController extends Controller
     public function storeAppVersions(Request $request)
     {
         $request->validate([
-            'apps.*.version' => 'required|string',
-            'apps.*.is_forced' => 'required|boolean',
+            'apps' => 'required|array',
+            'apps.company' => 'required|array',
+            'apps.company.both' => 'required|array',
+            'apps.company.android' => 'required|array',
+            'apps.company.ios' => 'required|array',
+            'apps.doctor' => 'required|array',
+            'apps.doctor.both' => 'required|array',
+            'apps.doctor.android' => 'required|array',
+            'apps.doctor.ios' => 'required|array',
+            'apps.company.both.version' => 'required|string',
+            'apps.company.android.version' => 'required|string',
+            'apps.company.ios.version' => 'required|string',
+            'apps.doctor.both.version' => 'required|string',
+            'apps.doctor.android.version' => 'required|string',
+            'apps.doctor.ios.version' => 'required|string',
+            'apps.company.both.is_forced' => 'required|boolean',
+            'apps.company.android.is_forced' => 'required|boolean',
+            'apps.company.ios.is_forced' => 'required|boolean',
+            'apps.doctor.both.is_forced' => 'required|boolean',
+            'apps.doctor.android.is_forced' => 'required|boolean',
+            'apps.doctor.ios.is_forced' => 'required|boolean',
         ]);
 
-        foreach ($request->apps as $appType => $data) {
+        foreach (AppVersion::SUPPORTED_APP_TYPES as $appType) {
+            foreach (AppVersion::SUPPORTED_PLATFORMS as $platform) {
+                $platformData = $request->input("apps.$appType.$platform");
 
-            AppVersion::updateOrCreate(
-                [
-                    'app_type' => $appType,
-                ],
-                [
-                    'version' => $data['version'],
-                    'is_forced' => $data['is_forced'],
-                ]
-            );
+                AppVersion::updateOrCreate(
+                    [
+                        'app_type' => $appType,
+                        'platform' => $platform,
+                    ],
+                    [
+                        'version' => $platformData['version'],
+                        'is_forced' => $platformData['is_forced'],
+                    ]
+                );
+            }
         }
 
         return redirect()->back()->with('success', 'App versions updated successfully!');

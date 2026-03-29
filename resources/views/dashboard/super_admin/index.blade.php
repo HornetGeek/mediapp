@@ -75,96 +75,64 @@
             </div>
         </div>
     </div>
-	<div class="card">
-            <form action="{{ route('superadmin.app.versions') }}" method="POST">
-                <div class="row">
-
-                    @csrf
-                    <!-- App 1 -->
-                    <div class="col-md-4">
-                        <div class="card">
+    @php
+        $appCards = [
+            'company' => '(Company,Reps) App',
+            'doctor' => 'Doctor App',
+        ];
+        $platformLabels = [
+            'both' => 'Legacy / No-platform',
+            'android' => 'Android',
+            'ios' => 'iOS',
+        ];
+    @endphp
+    <div class="card">
+        <form action="{{ route('superadmin.app.versions') }}" method="POST">
+            @csrf
+            <div class="row p-3">
+                @foreach ($appCards as $appType => $appTitle)
+                    <div class="col-md-6 mb-3">
+                        <div class="card h-100">
                             <div class="card-body">
-                                <h5 class="card-title">Super Admin App</h5>
-
-                                <div class="mb-3">
-                                    <label class="form-label">App Version</label>
-                                    <input type="text" name="apps[super_admin][version]" class="form-control"
-                                        value="{{ $data['versions']['super_admin'] ?? '' }}">
-                                </div>
-
-                                <div class="mb-3">
-                                    <label class="form-label">Force Update?</label>
-                                    <select name="apps[super_admin][is_forced]" class="form-control">
-                                        <option value="0" {{ ($data['forced']['super_admin'] ?? 0) == 0 ? 'selected' : '' }}>
-                                            False (Optional)
-                                        </option>
-                                        <option value="1" {{ ($data['forced']['super_admin'] ?? 0) == 1 ? 'selected' : '' }}>
-                                            True (Forced)
-                                        </option>
-                                    </select>
-                                </div>
+                                <h5 class="card-title">{{ $appTitle }}</h5>
+                                @foreach ($platformLabels as $platform => $platformLabel)
+                                    <div class="border rounded p-3 mb-3">
+                                        <h6 class="mb-3">{{ $platformLabel }}</h6>
+                                        <div class="mb-3">
+                                            <label class="form-label">App Version</label>
+                                            <input
+                                                type="text"
+                                                name="apps[{{ $appType }}][{{ $platform }}][version]"
+                                                class="form-control"
+                                                value="{{ old("apps.$appType.$platform.version", $data['versions'][$appType][$platform] ?? '') }}"
+                                            >
+                                        </div>
+                                        <div class="mb-0">
+                                            <label class="form-label">Force Update?</label>
+                                            <select name="apps[{{ $appType }}][{{ $platform }}][is_forced]" class="form-control">
+                                                <option
+                                                    value="0"
+                                                    {{ (int) old("apps.$appType.$platform.is_forced", $data['forced'][$appType][$platform] ?? 0) === 0 ? 'selected' : '' }}
+                                                >
+                                                    False (Optional)
+                                                </option>
+                                                <option
+                                                    value="1"
+                                                    {{ (int) old("apps.$appType.$platform.is_forced", $data['forced'][$appType][$platform] ?? 0) === 1 ? 'selected' : '' }}
+                                                >
+                                                    True (Forced)
+                                                </option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                @endforeach
                             </div>
                         </div>
                     </div>
-
-                    <!-- App 2 -->
-                    <div class="col-md-4">
-                        <div class="card">
-                            <div class="card-body">
-                                <h5 class="card-title">(Company,Reps) App</h5>
-
-                                <div class="mb-3">
-                                    <label class="form-label">App Version</label>
-                                    <input type="text" name="apps[company][version]" class="form-control"
-                                        value="{{ $data['versions']['company'] ?? '' }}">
-                                </div>
-
-                                <div class="mb-3">
-                                    <label class="form-label">Force Update?</label>
-                                    <select name="apps[company][is_forced]" class="form-control">
-                                        <option value="0" {{ ($data['forced']['company'] ?? 0) == 0 ? 'selected' : '' }}>
-                                            False (Optional)
-                                        </option>
-                                        <option value="1" {{ ($data['forced']['company'] ?? 0) == 1 ? 'selected' : '' }}>
-                                            True (Forced)
-                                        </option>
-                                    </select>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- App 3 -->
-                    <div class="col-md-4">
-                        <div class="card">
-                            <div class="card-body">
-                                <h5 class="card-title">Doctor App</h5>
-
-                                <div class="mb-3">
-                                    <label class="form-label">App Version</label>
-                                    <input type="text" name="apps[doctor][version]" class="form-control"
-                                        value="{{ $data['versions']['doctor'] ?? '' }}">
-                                </div>
-
-                                <div class="mb-3">
-                                    <label class="form-label">Force Update?</label>
-                                    <select name="apps[doctor][is_forced]" class="form-control">
-                                        <option value="0" {{ ($data['forced']['doctor'] ?? 0) == 0 ? 'selected' : '' }}>
-                                            False (Optional)
-                                        </option>
-                                        <option value="1" {{ ($data['forced']['doctor'] ?? 0) == 1 ? 'selected' : '' }}>
-                                            True (Forced)
-                                        </option>
-                                    </select>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-
-                </div>
-                <button type="submit" class="btn btn-primary m-4">Save</button>
-            </form>
-        </div>
+                @endforeach
+            </div>
+            <button type="submit" class="btn btn-primary m-4">Save</button>
+        </form>
+    </div>
 </div>
 @endsection
