@@ -10,11 +10,27 @@ return new class extends Migration {
      */
     public function up(): void
     {
-        Schema::table('notifications', function (Blueprint $table) {
-            $table->dropColumn('user_id');
-            $table->unsignedBigInteger('notifiable_id')->nullable();
-            $table->string('notifiable_type')->nullable();
-        });
+        if (!Schema::hasTable('notifications')) {
+            return;
+        }
+
+        if (Schema::hasColumn('notifications', 'user_id')) {
+            Schema::table('notifications', function (Blueprint $table) {
+                $table->dropColumn('user_id');
+            });
+        }
+
+        if (!Schema::hasColumn('notifications', 'notifiable_id')) {
+            Schema::table('notifications', function (Blueprint $table) {
+                $table->unsignedBigInteger('notifiable_id')->nullable();
+            });
+        }
+
+        if (!Schema::hasColumn('notifications', 'notifiable_type')) {
+            Schema::table('notifications', function (Blueprint $table) {
+                $table->string('notifiable_type')->nullable();
+            });
+        }
     }
 
     /**
@@ -22,9 +38,20 @@ return new class extends Migration {
      */
     public function down(): void
     {
-        Schema::table('notifications', function (Blueprint $table) {
-            $table->dropColumn('notifiable_id');
-            $table->dropColumn('notifiable_type');
-        });
+        if (!Schema::hasTable('notifications')) {
+            return;
+        }
+
+        if (Schema::hasColumn('notifications', 'notifiable_id')) {
+            Schema::table('notifications', function (Blueprint $table) {
+                $table->dropColumn('notifiable_id');
+            });
+        }
+
+        if (Schema::hasColumn('notifications', 'notifiable_type')) {
+            Schema::table('notifications', function (Blueprint $table) {
+                $table->dropColumn('notifiable_type');
+            });
+        }
     }
 };
