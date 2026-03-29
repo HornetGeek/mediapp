@@ -67,7 +67,10 @@ class AuthRepController extends Controller
             $user->fcm_token = null;
             $user->save();
 
-            $user->currentAccessToken()->delete();
+            $currentToken = $user->currentAccessToken();
+            if ($currentToken) {
+                $currentToken->delete();
+            }
 
             return ApiResponse::sendResponse(200, 'Representative logged out successfully', []);
         }

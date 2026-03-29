@@ -25,8 +25,10 @@ class PackageRequest extends FormRequest
     {
         return [
             'name' => 'required|string|max:255',
-            'duration' => 'required|integer|min:1', // Duration in days
+            'plan_type' => 'required_without:duration|in:quarterly,semi_annual,annual,custom_days',
+            'duration' => 'required_without:plan_type|required_if:plan_type,custom_days|integer|min:1',
             'price' => 'required|numeric|min:0',
+            'description' => 'nullable|string',
         ];
     }
 }

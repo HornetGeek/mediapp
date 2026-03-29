@@ -5,8 +5,9 @@ namespace App\Http\Controllers\dashboard\super_admin;
 use App\Http\Controllers\Controller;
 use App\Models\Company;
 use App\Models\Package;
-use App\Models\User;
+use App\Services\SubscriptionPlanService;
 use App\Traits\FilterTrait;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -25,7 +26,7 @@ class CompaniesController extends Controller
         return view('dashboard.super_admin.companies.index', compact('companies', 'packages'));
     }
 
-    public function store(Request $request)
+    public function store(Request $request, SubscriptionPlanService $subscriptionPlanService)
     {
         $validated = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
@@ -44,12 +45,13 @@ class CompaniesController extends Controller
 
         try {
             $package = Package::findOrFail($request->package_id);
+            $subscriptionStart = now();
 
             $company = Company::create([
                 'name' => $request->name,
                 'package_id' => $request->package_id,
-                'subscription_start' => now(),
-                'subscription_end' => now()->addDays($package->duration),
+                'subscription_start' => $subscriptionStart,
+                'subscription_end' => $subscriptionPlanService->calculateSubscriptionEndDate($subscriptionStart, $package),
                 'phone' => $request->phone,
                 'email' => $request->email,
                 'password' => Hash::make($request->password),
@@ -70,7 +72,7 @@ class CompaniesController extends Controller
         }
     }
 
-    public function update(Request $request, $id)
+    public function update(Request $request, $id, SubscriptionPlanService $subscriptionPlanService)
     {
         $company = Company::findOrFail($id);
 
@@ -86,17 +88,17 @@ class CompaniesController extends Controller
             return redirect()->back()->withErrors($validated)->withInput();
         }
 
-        DB::transaction(function () use ($request, $company) {
+        DB::transaction(function () use ($request, $company, $subscriptionPlanService) {
             $package = Package::find($request->package_id);
 
             // استخدام تاريخ الاشتراك من الفورم إذا حدد المستخدم، أو القديم أو الآن
             $subscriptionStart = $request->subscription_start
-                ? \Carbon\Carbon::parse($request->subscription_start)
-                : ($company->subscription_start ?? now());
+                ? Carbon::parse($request->subscription_start)
+                : ($company->subscription_start ? Carbon::parse($company->subscription_start) : now());
 
             // إذا غيرت الباقة، نضيف مدة الباقة لتحديد انتهاء الاشتراك
             $subscriptionEnd = $package
-                ? $subscriptionStart->copy()->addDays($package->duration)
+                ? $subscriptionPlanService->calculateSubscriptionEndDate($subscriptionStart, $package)
                 : ($company->subscription_end ?? $subscriptionStart->copy()->addDays(30));
 
             // الحالة تعتمد على نهاية الاشتراك

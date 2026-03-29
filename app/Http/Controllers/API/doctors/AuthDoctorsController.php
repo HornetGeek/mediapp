@@ -78,7 +78,12 @@ class AuthDoctorsController extends Controller
         if ($doctor) {
             $doctor->fcm_token = null;
             $doctor->save();
-            $doctor->currentAccessToken()->delete();
+
+            $currentToken = $doctor->currentAccessToken();
+            if ($currentToken) {
+                $currentToken->delete();
+            }
+
             return ApiResponse::sendResponse(200, 'Doctor logged out successfully', []);
         }
 

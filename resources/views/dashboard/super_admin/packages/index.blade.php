@@ -47,7 +47,7 @@
                                                 <th>#</th>
                                                 <th>Package Name</th>
                                                 <th>Price(in EGP)</th>
-                                                <th>Duration(in day)</th>
+                                                <th>Plan</th>
                                                 <th>description</th>
                                                 <th>Actions</th>
                                             </tr>
@@ -78,7 +78,7 @@
                                                             </div>
                                                         </td>
                                                         <td>{{$package->price}}</td>
-                                                        <td>{{$package->duration}}</td>
+                                                        <td>{{$package->plan_label}}</td>
                                                         <td>{{$package->description ?? '---'}}</td>
                                                         <td>
                                                             <ul class="list-inline me-auto mb-0">

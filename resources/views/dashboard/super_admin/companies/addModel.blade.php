@@ -24,8 +24,7 @@
                                     required>
                                     <option>Select Package</option>
                                     @foreach ($packages as $package)
-                                        <option value="{{ $package->id }}">{{ $package->name }} /
-                                            {{ $package->duration . ' Days' }}</option>
+                                        <option value="{{ $package->id }}">{{ $package->name }} / {{ $package->plan_label }}</option>
                                     @endforeach
                                 </select>
                             </div>

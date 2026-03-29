@@ -11,6 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasColumn('appointments', 'cancelled_by')) {
+            return;
+        }
+
         Schema::table('appointments', function (Blueprint $table) {
             $table->string('cancelled_by')->nullable()->after('company_id');
         });
@@ -21,8 +25,12 @@ return new class extends Migration
      */
     public function down(): void
     {
+        if (! Schema::hasColumn('appointments', 'cancelled_by')) {
+            return;
+        }
+
         Schema::table('appointments', function (Blueprint $table) {
-            //
+            $table->dropColumn('cancelled_by');
         });
     }
 };

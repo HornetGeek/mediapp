@@ -14,22 +14,44 @@ class SendNotificationEvent
 {
     use Dispatchable, InteractsWithSockets, SerializesModels;
 
+    public const DEFAULT_DEDUPE_WINDOW_MINUTES = 10;
+
     public $notifiable;
     public $title;
     public $body;
     public $data;
     public $target_type;
+    public $dedupe_key;
+    public $dedupe_window_minutes;
 
     /**
      * Create a new event instance.
      */
-    public function __construct($notifiable, $title, $body, $target_type, $data = [])
+    public function __construct(
+        $notifiable,
+        $title,
+        $body,
+        $targetTypeOrData = null,
+        array $data = [],
+        ?string $dedupeKey = null,
+        ?int $dedupeWindowMinutes = null
+    )
     {
         $this->notifiable = $notifiable;
         $this->title = $title;
         $this->body = $body;
-        $this->target_type = $target_type;
-        $this->data = $data;
+
+        if (is_array($targetTypeOrData)) {
+            $this->target_type = null;
+            $this->data = $targetTypeOrData;
+        } else {
+            $this->target_type = $targetTypeOrData;
+            $this->data = $data;
+        }
+
+        $this->dedupe_key = $dedupeKey;
+        $window = $dedupeWindowMinutes ?? self::DEFAULT_DEDUPE_WINDOW_MINUTES;
+        $this->dedupe_window_minutes = $window > 0 ? $window : self::DEFAULT_DEDUPE_WINDOW_MINUTES;
     }
 
     // /**
