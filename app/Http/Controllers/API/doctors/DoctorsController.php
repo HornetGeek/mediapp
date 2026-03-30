@@ -439,6 +439,20 @@ class DoctorsController extends Controller
         return ApiResponse::sendResponse(200, 'Notification marked as read successfully', new NotificationsResource($notification));
     }
 
+    public function markAllNotificationsAsRead()
+    {
+        $doctor = auth()->user();
+
+        $updatedCount = Notification::where('notifiable_id', $doctor->id)
+            ->where('notifiable_type', Doctors::class)
+            ->where('is_read', false)
+            ->update(['is_read' => true]);
+
+        return ApiResponse::sendResponse(200, 'All unread notifications marked as read successfully', [
+            'updated_count' => $updatedCount,
+        ]);
+    }
+
     public function deleteNotification($notification_id)
     {
         $doctor = auth()->user();

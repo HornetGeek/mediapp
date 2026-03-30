@@ -133,6 +133,7 @@ Route::prefix('doctor')->group(function () {
             Route::get('/filter-appointment/reps', 'filterAppointments');
             Route::delete('/delete-appointment/{book_id}', 'deleteAppointment');
             Route::get('notifications', 'getNotifications');
+            Route::put('/notifications/read', 'markAllNotificationsAsRead');
             Route::put('/notifications/{id}/read', 'markNotificationAsRead');
             Route::delete('/notifications/{id}', 'deleteNotification');
             Route::post('/availabilities/copy-last-month', 'copyLastMonthTimes');
@@ -189,6 +190,7 @@ Route::prefix('company')->group(function () {
 
             // Notifications
             Route::get('notifications', 'getNotifications');
+            Route::put('/notifications/read', 'markAllNotificationsAsRead');
             Route::put('/notifications/{id}/read', 'markNotificationAsRead');
             Route::delete('/notifications/{id}', 'deleteNotification');
             Route::delete('/company-notifications/clear', 'clearAllNotifications');

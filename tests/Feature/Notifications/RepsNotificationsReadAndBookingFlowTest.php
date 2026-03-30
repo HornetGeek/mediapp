@@ -203,6 +203,123 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
         ]);
     }
 
+    public function test_booking_duplicate_pending_slot_returns_409_with_clear_message(): void
+    {
+        $company = $this->createCompany();
+        $rep = $this->createRepresentative($company, 'dup-pending-rep@example.com', '01055555556');
+        $otherRep = $this->createRepresentative($company, 'dup-pending-rep-other@example.com', '01055555559');
+        $doctor = $this->createDoctor('dup-pending-doctor@example.com', '01066666667');
+
+        $date = now()->toDateString();
+        DB::table('appointments')->insert([
+            'doctors_id' => $doctor->id,
+            'representative_id' => $otherRep->id,
+            'company_id' => $company->id,
+            'date' => $date,
+            'start_time' => '10:00:00',
+            'end_time' => '10:05:00',
+            'status' => 'pending',
+            'appointment_code' => '30000000-0000-4000-8000-000000000001',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        Sanctum::actingAs($rep, ['representative']);
+
+        $response = $this->postJson('/api/reps/booking', [
+            'doctors_id' => $doctor->id,
+            'date' => $date,
+            'start_time' => '10:00:00',
+        ]);
+
+        $response->assertStatus(409);
+        $response->assertJsonPath('message', 'This time slot already has an active appointment (pending or confirmed).');
+    }
+
+    public function test_booking_duplicate_confirmed_slot_returns_409_with_clear_message(): void
+    {
+        $company = $this->createCompany();
+        $rep = $this->createRepresentative($company, 'dup-confirmed-rep@example.com', '01055555557');
+        $otherRep = $this->createRepresentative($company, 'dup-confirmed-rep-other@example.com', '01055555560');
+        $doctor = $this->createDoctor('dup-confirmed-doctor@example.com', '01066666668');
+
+        $date = now()->toDateString();
+        DB::table('appointments')->insert([
+            'doctors_id' => $doctor->id,
+            'representative_id' => $otherRep->id,
+            'company_id' => $company->id,
+            'date' => $date,
+            'start_time' => '11:00:00',
+            'end_time' => '11:05:00',
+            'status' => 'confirmed',
+            'appointment_code' => '30000000-0000-4000-8000-000000000002',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        Sanctum::actingAs($rep, ['representative']);
+
+        $response = $this->postJson('/api/reps/booking', [
+            'doctors_id' => $doctor->id,
+            'date' => $date,
+            'start_time' => '11:00:00',
+        ]);
+
+        $response->assertStatus(409);
+        $response->assertJsonPath('message', 'This time slot already has an active appointment (pending or confirmed).');
+    }
+
+    public function test_booking_same_slot_after_cancelled_allows_creation(): void
+    {
+        $company = $this->createCompany();
+        $rep = $this->createRepresentative($company, 'rebook-rep@example.com', '01055555558');
+        $doctor = $this->createDoctor('rebook-doctor@example.com', '01066666669');
+
+        $date = now()->toDateString();
+        DB::table('appointments')->insert([
+            'doctors_id' => $doctor->id,
+            'representative_id' => $rep->id,
+            'company_id' => $company->id,
+            'date' => $date,
+            'start_time' => '12:00:00',
+            'end_time' => '12:05:00',
+            'status' => 'cancelled',
+            'cancelled_by' => 'system',
+            'appointment_code' => '30000000-0000-4000-8000-000000000003',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        Sanctum::actingAs($rep, ['representative']);
+
+        $response = $this->postJson('/api/reps/booking', [
+            'doctors_id' => $doctor->id,
+            'date' => $date,
+            'start_time' => '12:00:00',
+        ]);
+
+        $response->assertStatus(201);
+        $response->assertJsonPath('code', 201);
+
+        $this->assertEquals(
+            2,
+            Appointment::where('doctors_id', $doctor->id)
+                ->count()
+        );
+        $this->assertEquals(
+            1,
+            Appointment::where('doctors_id', $doctor->id)
+                ->where('status', 'cancelled')
+                ->count()
+        );
+        $this->assertEquals(
+            1,
+            Appointment::where('doctors_id', $doctor->id)
+                ->where('status', 'pending')
+                ->count()
+        );
+    }
+
     private function createCompany(): Company
     {
         return Company::create([

@@ -210,6 +210,20 @@ class CompaniessController extends Controller
         return ApiResponse::sendResponse(200, 'Notification marked as read successfully', new NotificationsResource($notification));
     }
 
+    public function markAllNotificationsAsRead()
+    {
+        $company = Company::find(Auth::user()->id);
+
+        $updatedCount = Notification::where('notifiable_id', $company->id)
+            ->where('notifiable_type', Company::class)
+            ->where('is_read', false)
+            ->update(['is_read' => true]);
+
+        return ApiResponse::sendResponse(200, 'All unread notifications marked as read successfully', [
+            'updated_count' => $updatedCount,
+        ]);
+    }
+
     public function deleteNotification($notification_id)
     {
         $company = Company::find(Auth::user()->id);
