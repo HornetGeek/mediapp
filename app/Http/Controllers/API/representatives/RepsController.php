@@ -20,6 +20,7 @@ use App\Models\Specialty;
 use App\Services\AppointmentCancellationAndBookedService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 
@@ -117,6 +118,7 @@ class RepsController extends Controller
 
     public function bookAppointment(Request $request)
     {
+        $duplicateSlotMessage = 'This time slot already has an active appointment (pending or confirmed).';
 
         $validated = Validator::make($request->all(), [
             'doctors_id' => 'required|exists:doctors,id',
@@ -133,24 +135,27 @@ class RepsController extends Controller
         $date = $request->date;
         $start = Carbon::parse($date . ' ' . $request->start_time);
         $end = $start->copy()->addMinutes(5);
+        $slotStartTime = $start->format('H:i:s');
+        $slotEndTime = $end->format('H:i:s');
 
 
         // Check if there datetime booked
-        $pendingAppointment = Appointment::where('doctors_id', $request->doctors_id)
+        $hasActiveSlotConflict = Appointment::where('doctors_id', $request->doctors_id)
             ->where('date', $date)
-            ->where(function ($query) use ($start, $end) {
-                $query->where(function ($q) use ($start, $end) {
-                    $q->where(DB::raw("CONCAT(date, ' ', start_time)"), '<', $end)
-                        ->where(DB::raw("CONCAT(date, ' ', end_time)"), '>', $start);
+            ->where(function ($query) use ($slotStartTime, $slotEndTime) {
+                $query->where(function ($q) use ($slotStartTime, $slotEndTime) {
+                    $q->whereRaw('TIME(start_time) < ?', [$slotEndTime])
+                        ->whereRaw('TIME(end_time) > ?', [$slotStartTime]);
                 });
+                $query->orWhereRaw('TIME(start_time) = ?', [$slotStartTime]);
             })
-            ->where('status', 'pending')
+            ->whereIn('status', ['pending', 'confirmed'])
             ->exists();
 
         // dd($exists);
 
-        if ($pendingAppointment) {
-            return ApiResponse::sendResponse(409, 'This time slot is already booked by another representative and is pending confirmation.', []);
+        if ($hasActiveSlotConflict) {
+            return ApiResponse::sendResponse(409, $duplicateSlotMessage, []);
         }
 
         // Check if how many appointments each company has today
@@ -213,16 +218,24 @@ class RepsController extends Controller
         if ($appointmentStatusWithDoctor) {
             return ApiResponse::sendResponse(403, 'You cannot book appointment with this doctor, because you have previous book not completed', []);
         }
-        $appointment = Appointment::create([
-            'doctors_id' => $request->doctors_id,
-            'representative_id' => auth()->id(),
-            'start_time' => $start,
-            'end_time' => $end,
-            'date' => $date,
-            'status' => "pending",
-            'company_id' => auth()->user()->company_id
+        try {
+            $appointment = Appointment::create([
+                'doctors_id' => $request->doctors_id,
+                'representative_id' => auth()->id(),
+                'start_time' => $slotStartTime,
+                'end_time' => $slotEndTime,
+                'date' => $date,
+                'status' => "pending",
+                'company_id' => auth()->user()->company_id
 
-        ]);
+            ]);
+        } catch (QueryException $exception) {
+            if ($this->isDuplicateActiveSlotViolation($exception)) {
+                return ApiResponse::sendResponse(409, $duplicateSlotMessage, []);
+            }
+
+            throw $exception;
+        }
         $appointment->load(['doctor', 'representative', 'company']);
 
         $doctor = $appointment->doctor;
@@ -237,6 +250,22 @@ class RepsController extends Controller
       
       
         return ApiResponse::sendResponse(201, 'Appointment booked successfully', new AppointmentsResource($appointment));
+    }
+
+    private function isDuplicateActiveSlotViolation(QueryException $exception): bool
+    {
+        $sqlState = (string) ($exception->errorInfo[0] ?? $exception->getCode());
+        $driverCode = (string) ($exception->errorInfo[1] ?? '');
+        $message = strtolower($exception->getMessage());
+
+        if (in_array($sqlState, ['23000', '23505'], true)) {
+            return str_contains($message, 'appointments_active_slot_unique')
+                || str_contains($message, 'unique constraint failed: appointments.doctors_id, appointments.date, appointments.start_time, appointments.slot_lock')
+                || $driverCode === '1062';
+        }
+
+        return str_contains($message, 'appointments_active_slot_unique')
+            || str_contains($message, 'unique constraint failed: appointments.doctors_id, appointments.date, appointments.start_time, appointments.slot_lock');
     }
 
     public function getRepsAppointments()
