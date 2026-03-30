@@ -216,6 +216,7 @@ Route::prefix('reps')->group(function () {
             Route::put('/completed-appointment/{book_id}', 'completedBooking');
             Route::delete('/delete-appointment/{book_id}', 'deleteAppointment');
             Route::get('notifications', 'getNotifications');
+            Route::put('/notifications/read', 'markAllNotificationsAsRead');
             Route::put('/notifications/{id}/read', 'markNotificationAsRead');
             Route::delete('/notifications/{id}', 'deleteNotification');
             Route::delete('/reps-notifications/clear', 'clearAllNotifications');
