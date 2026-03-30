@@ -292,6 +292,21 @@ class RepsController extends Controller
             ->get();
         return ApiResponse::sendResponse(200, 'Notifications fetched successfully', NotificationsResource::collection($notifications));
     }
+
+    public function markAllNotificationsAsRead()
+    {
+        $reps = auth()->user();
+
+        $updatedCount = Notification::where('notifiable_id', $reps->id)
+            ->where('notifiable_type', Representative::class)
+            ->where('is_read', false)
+            ->update(['is_read' => true]);
+
+        return ApiResponse::sendResponse(200, 'All unread notifications marked as read successfully', [
+            'updated_count' => $updatedCount,
+        ]);
+    }
+
     public function markNotificationAsRead($notification_id)
     {
         $reps = auth()->user();
