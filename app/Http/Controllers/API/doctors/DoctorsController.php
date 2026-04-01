@@ -16,6 +16,7 @@ use App\Http\Resources\NotificationsResource;
 use App\Http\Resources\SpecialtiesResource;
 use App\Models\Appointment;
 use App\Models\Company;
+use App\Models\DoctorAvailability;
 use App\Models\DoctorBlock;
 use App\Models\Doctors;
 use App\Models\FeedbackEmail;
@@ -167,14 +168,6 @@ class DoctorsController extends Controller
     {
         $doctor = $request->user();
 
-        // $request->validate([
-        //     'availabilities' => ['array'],
-        //     'availabilities.*.date' => ['required', 'string'], // "Monday"
-        //     'availabilities.*.start_time' => ['required', 'string'],
-        //     'availabilities.*.end_time' => ['required', 'string'],
-        //     'availabilities.*.status' => ['nullable', 'string'],
-        // ]);
-
         $validator = Validator::make($request->all(), [
             'date' => ['required', 'string'],
             'start_time' => ['required', 'string'],
@@ -187,87 +180,111 @@ class DoctorsController extends Controller
         }
         $validated = $validator->validated();
 
-        try {
-            // convert time from 12h to 24h format
-            $startTime = Carbon::createFromFormat('h:i A', $validated['start_time'])->format('H:i:s');
-            $endTime = Carbon::createFromFormat('h:i A', $validated['end_time'])->format('H:i:s');
-        } catch (\Exception $e) {
-            return ApiResponse::sendResponse(422, 'Invalid time format, please use hh:mm AM/PM');
-        }
-        $conflict = $doctor->availableTimes()
-            ->where('date', $validated['date'])
-            ->where('start_time', $startTime)
-            ->where('end_time', $endTime)
-            ->exists();
-
-        if ($conflict) {
-            return ApiResponse::sendResponse(422, "You already have an availability for {$validated['date']} at the same time");
+        $normalizedTimes = $this->normalizeAvailabilityTimes($validated['start_time'], $validated['end_time']);
+        if (isset($normalizedTimes['error'])) {
+            return ApiResponse::sendResponse(422, $normalizedTimes['error'], []);
         }
 
+        if ($this->hasAvailabilityOverlap(
+            (int) $doctor->id,
+            $validated['date'],
+            $normalizedTimes['start_time'],
+            $normalizedTimes['end_time']
+        )) {
+            return ApiResponse::sendResponse(422, 'This time conflicts with an existing availability', []);
+        }
 
-        $created = $doctor->availableTimes()->create([
+        $doctor->availableTimes()->create([
             'date' => $validated['date'],
-            'start_time' => $startTime,
-            'end_time' => $endTime,
+            'start_time' => $normalizedTimes['start_time'],
+            'end_time' => $normalizedTimes['end_time'],
             'status' => $validated['status'] ?? 'available',
         ]);
         return ApiResponse::sendResponse(200, 'Availabilities saved successfully', DoctorResource::make($doctor->load('availableTimes')));
+    }
 
+    public function updateAvailableTime(Request $request, $availability_id)
+    {
+        $doctor = $request->user();
 
+        $validator = Validator::make($request->all(), [
+            'date' => ['required', 'string'],
+            'start_time' => ['required', 'string'],
+            'end_time' => ['required', 'string'],
+        ]);
 
-        //     $created = [];
+        if ($validator->fails()) {
+            return ApiResponse::sendResponse(422, $validator->errors()->first(), []);
+        }
 
-        //     foreach ($request->availabilities as $availability) {
-        //         // convert time from 12h to 24h format
-        //         try {
-        //             $startTime = Carbon::createFromFormat('h:i A', $availability['start_time'])->format('H:i:s');
-        //             $endTime   = Carbon::createFromFormat('h:i A', $availability['end_time'])->format('H:i:s');
-        //         } catch (\Exception $e) {
-        //             return ApiResponse::sendResponse(422, 'Invalid time format, please use hh:mm AM/PM');
-        //         }
+        $availability = $doctor->availableTimes()
+            ->where('id', $availability_id)
+            ->where('status', 'available')
+            ->first();
 
-        //         // تحقق من وجود تداخل
-        //         // $conflict = $doctor->availableTimes()
-        //         //     ->where('date', $availability['date'])
-        //         //     ->where(function ($query) use ($startTime, $endTime) {
-        //         //         if ($startTime < $endTime) {
-        //         //             // حالة طبيعية: بنفس اليوم
-        //         //             $query->where('start_time', '<', $endTime)
-        //         //                 ->where('end_time', '>', $startTime);
-        //         //         } else {
-        //         //             // حالة الموعد ممتد لليوم التالي
-        //         //             $query->where(function ($q) use ($startTime, $endTime) {
-        //         //                 $q->where('start_time', '>=', $startTime) // بعد البداية
-        //         //                     ->orWhere('end_time', '<=', $endTime);  // أو قبل النهاية
-        //         //             });
-        //         //         }
-        //         //     })
-        //         //     ->exists();
+        if (!$availability) {
+            return ApiResponse::sendResponse(404, 'Availability not found or not editable', []);
+        }
 
-        //         // if ($conflict) {
-        //         //     return ApiResponse::sendResponse(422, 'This time conflicts with an existing availability');
-        //         // }
+        $validated = $validator->validated();
+        $normalizedTimes = $this->normalizeAvailabilityTimes($validated['start_time'], $validated['end_time']);
+        if (isset($normalizedTimes['error'])) {
+            return ApiResponse::sendResponse(422, $normalizedTimes['error'], []);
+        }
 
-        //         $conflict = $doctor->availableTimes()
-        //             ->where('date', $availability['date'])
-        //             ->where('start_time', $startTime)
-        //             ->where('end_time', $endTime)
-        //             ->exists();
+        if ($this->hasAvailabilityOverlap(
+            (int) $doctor->id,
+            $validated['date'],
+            $normalizedTimes['start_time'],
+            $normalizedTimes['end_time'],
+            (int) $availability->id
+        )) {
+            return ApiResponse::sendResponse(422, 'This time conflicts with an existing availability', []);
+        }
 
-        //         if ($conflict) {
-        //             return ApiResponse::sendResponse(422, "You already have an availability for {$availability['date']} at the same time");
-        //         }
+        if ($this->hasActiveAppointmentOverlap(
+            (int) $doctor->id,
+            $validated['date'],
+            $normalizedTimes['start_time'],
+            $normalizedTimes['end_time']
+        )) {
+            return ApiResponse::sendResponse(422, 'Cannot update availability that overlaps active appointments', []);
+        }
 
+        $availability->update([
+            'date' => $validated['date'],
+            'start_time' => $normalizedTimes['start_time'],
+            'end_time' => $normalizedTimes['end_time'],
+        ]);
 
-        //         $created[] = $doctor->availableTimes()->create([
-        //             'date'       => $availability['date'], // (مثلاً "Monday")
-        //             'start_time' => $startTime,
-        //             'end_time'   => $endTime,
-        //             'status'     => $availability['status'] ?? 'available',
-        //         ]);
-        //     }
+        return ApiResponse::sendResponse(200, 'Availability updated successfully', new AvailableTimeResource($availability->fresh()));
+    }
 
-        //     return ApiResponse::sendResponse(200, 'Availabilities saved successfully', DoctorResource::make($doctor->load('availableTimes')));
+    public function deleteAvailableTime(Request $request, $availability_id)
+    {
+        $doctor = $request->user();
+
+        $availability = $doctor->availableTimes()
+            ->where('id', $availability_id)
+            ->where('status', 'available')
+            ->first();
+
+        if (!$availability) {
+            return ApiResponse::sendResponse(404, 'Availability not found or not deletable', []);
+        }
+
+        if ($this->hasActiveAppointmentOverlap(
+            (int) $doctor->id,
+            $availability->date,
+            $availability->start_time,
+            $availability->end_time
+        )) {
+            return ApiResponse::sendResponse(422, 'Cannot delete availability that overlaps active appointments', []);
+        }
+
+        $availability->delete();
+
+        return ApiResponse::sendResponse(200, 'Availability deleted successfully', []);
     }
 
     // public function copyLastMonthTimes(Request $request)
@@ -754,6 +771,58 @@ class DoctorsController extends Controller
             return ApiResponse::sendResponse(404, 'No blocked users found', []);
         }
         return ApiResponse::sendResponse(200, 'Blocked users fetched successfully', BlockSearchResource::collection($blocked));
+    }
+
+    private function normalizeAvailabilityTimes(string $startTime, string $endTime): array
+    {
+        try {
+            $normalizedStartTime = Carbon::createFromFormat('h:i A', $startTime)->format('H:i:s');
+            $normalizedEndTime = Carbon::createFromFormat('h:i A', $endTime)->format('H:i:s');
+        } catch (\Exception $exception) {
+            return ['error' => 'Invalid time format, please use hh:mm AM/PM'];
+        }
+
+        if ($normalizedStartTime >= $normalizedEndTime) {
+            return ['error' => 'Start time must be before end time'];
+        }
+
+        return [
+            'start_time' => $normalizedStartTime,
+            'end_time' => $normalizedEndTime,
+        ];
+    }
+
+    private function hasAvailabilityOverlap(
+        int $doctorId,
+        string $date,
+        string $startTime,
+        string $endTime,
+        ?int $ignoredAvailabilityId = null
+    ): bool {
+        return DoctorAvailability::query()
+            ->where('doctors_id', $doctorId)
+            ->where('date', $date)
+            ->when($ignoredAvailabilityId !== null, function ($query) use ($ignoredAvailabilityId) {
+                $query->where('id', '!=', $ignoredAvailabilityId);
+            })
+            ->whereTime('start_time', '<', $endTime)
+            ->whereTime('end_time', '>', $startTime)
+            ->exists();
+    }
+
+    private function hasActiveAppointmentOverlap(
+        int $doctorId,
+        string $date,
+        string $startTime,
+        string $endTime
+    ): bool {
+        return Appointment::query()
+            ->where('doctors_id', $doctorId)
+            ->whereDate('date', $date)
+            ->whereIn('status', ['pending', 'confirmed'])
+            ->whereTime('start_time', '<', $endTime)
+            ->whereTime('end_time', '>', $startTime)
+            ->exists();
     }
 
     private function refreshDoctorAppointments(AppointmentStatusRefreshService $statusRefresh): int
