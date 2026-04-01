@@ -23,6 +23,7 @@ use App\Models\Notification;
 use App\Models\Representative;
 use App\Models\Specialty;
 use App\Models\User;
+use App\Services\AppointmentStatusRefreshService;
 use App\Services\FirebaseNotificationService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -309,19 +310,24 @@ class DoctorsController extends Controller
     //     return ApiResponse::sendResponse(200, 'Availabilities copied from last month', AvailableTimeResource::collection($updatedAvailabilities));
     // }
 
-    public function getDoctorAppointments(Request $request)
+    public function getDoctorAppointments(Request $request, AppointmentStatusRefreshService $statusRefresh)
     {
         $validator = Validator::make($request->all(), [
             'status' => ['nullable', 'in:cancelled,confirmed,pending,left,suspended'],
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ], [], [
             'status' => 'Status',
+            'page' => 'Page',
+            'per_page' => 'Per Page',
         ]);
 
         if ($validator->fails()) {
             return ApiResponse::sendResponse(422, $validator->messages()->first(), []);
         }
 
-        $doctor = auth()->user()->id;
+        $perPage = (int) $request->input('per_page', 10);
+        $doctor = $this->refreshDoctorAppointments($statusRefresh);
 
         $appointments = Appointment::with(['representative', 'doctor', 'company'])
             ->where('doctors_id', $doctor)
@@ -330,12 +336,15 @@ class DoctorsController extends Controller
             })
             ->orderBy('date', 'asc')
             ->orderBy('start_time', 'asc')
-            ->get();
+            ->paginate($perPage);
 
-        if ($appointments->isNotEmpty()) {
-            return ApiResponse::sendResponse(200, 'Appointments fetched successfully', DoctorAppointmentsResource::collection($appointments));
+        $pagination = $this->buildPaginationMeta($appointments);
+        $items = DoctorAppointmentsResource::collection($appointments->items());
+
+        if ($appointments->total() > 0) {
+            return ApiResponse::sendResponse(200, 'Appointments fetched successfully', $items, $pagination);
         }
-        return ApiResponse::sendResponse(200, 'Appointments Not Found', []);
+        return ApiResponse::sendResponse(200, 'Appointments Not Found', [], $pagination);
     }
 
     public function cancellationAppointment($book_id, FirebaseNotificationService $service)
@@ -370,10 +379,9 @@ class DoctorsController extends Controller
         return ApiResponse::sendResponse(200, 'Appointment cancelled successfully', new DoctorAppointmentsResource($appointment));
     }
 
-    public function filterAppointments(Request $request)
+    public function filterAppointments(Request $request, AppointmentStatusRefreshService $statusRefresh)
     {
-
-        $doctor = auth()->user()->id;
+        $doctor = $this->refreshDoctorAppointments($statusRefresh);
 
 
         $filters = $request->only(['name']);
@@ -677,13 +685,13 @@ class DoctorsController extends Controller
         return ApiResponse::sendResponse(200, 'Email feedback fetched successfully', $get_email_feedback);
     }
 
-    public function getCancelledAppointments()
+    public function getCancelledAppointments(AppointmentStatusRefreshService $statusRefresh)
     {
-        $doctor = auth()->user()->id;
+        $doctor = $this->refreshDoctorAppointments($statusRefresh);
         // dd($doctor);
         $appointments = Appointment::with(['representative', 'doctor'])
             ->where('doctors_id', $doctor)
-            ->OrWhere('status', 'cancelled')
+            ->where('status', 'cancelled')
             ->orderBy('date', 'asc')
             ->orderBy('start_time', 'asc')
             ->get();
@@ -694,13 +702,13 @@ class DoctorsController extends Controller
         return ApiResponse::sendResponse(200, 'Cancelled Appointments Not Found', []);
     }
 
-    public function getPendingAppointments()
+    public function getPendingAppointments(AppointmentStatusRefreshService $statusRefresh)
     {
-        $doctor = auth()->user()->id;
+        $doctor = $this->refreshDoctorAppointments($statusRefresh);
         // dd($doctor);
         $appointments = Appointment::with(['representative', 'doctor'])
             ->where('doctors_id', $doctor)
-            ->OrWhere('status', 'pending')
+            ->where('status', 'pending')
             ->orderBy('date', 'asc')
             ->orderBy('start_time', 'asc')
             ->get();
@@ -711,13 +719,13 @@ class DoctorsController extends Controller
         return ApiResponse::sendResponse(200, 'Pending Appointments Not Found', []);
     }
 
-    public function getConfirmedAppointments()
+    public function getConfirmedAppointments(AppointmentStatusRefreshService $statusRefresh)
     {
-        $doctor = auth()->user()->id;
+        $doctor = $this->refreshDoctorAppointments($statusRefresh);
         // dd($doctor);
         $appointments = Appointment::with(['representative', 'doctor'])
             ->where('doctors_id', $doctor)
-            ->OrWhere('status', 'confirmed')
+            ->where('status', 'confirmed')
             ->orderBy('date', 'asc')
             ->orderBy('start_time', 'asc')
             ->get();
@@ -746,5 +754,26 @@ class DoctorsController extends Controller
             return ApiResponse::sendResponse(404, 'No blocked users found', []);
         }
         return ApiResponse::sendResponse(200, 'Blocked users fetched successfully', BlockSearchResource::collection($blocked));
+    }
+
+    private function refreshDoctorAppointments(AppointmentStatusRefreshService $statusRefresh): int
+    {
+        $doctorId = (int) auth()->id();
+        $statusRefresh->refreshForDoctor($doctorId);
+
+        return $doctorId;
+    }
+
+    private function buildPaginationMeta($paginator): array
+    {
+        return [
+            'current_page' => $paginator->currentPage(),
+            'per_page' => $paginator->perPage(),
+            'total' => $paginator->total(),
+            'last_page' => $paginator->lastPage(),
+            'from' => $paginator->firstItem(),
+            'to' => $paginator->lastItem(),
+            'has_more_pages' => $paginator->hasMorePages(),
+        ];
     }
 }
