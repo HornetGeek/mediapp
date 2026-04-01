@@ -19,14 +19,8 @@ class Kernel extends ConsoleKernel
 
           // $schedule->command('doctor:monthly-reminder')->everyMinute();
 
-          $schedule->command('appointments:update-left')->everyMinute()->withoutOverlapping()->onFailure(function () {
-               Log::error('appointments:update-left failed');
-          });
           $schedule->command('app:send-reminder-subscription-for-company')->dailyAt('01:00')->withoutOverlapping()->onFailure(function () {
                Log::error('app:send-reminder-subscription-for-company failed');
-          });
-          $schedule->command('app:update-status-appointment-to-suspended')->everyMinute()->withoutOverlapping()->onFailure(function () {
-               Log::error('app:update-status-appointment-to-suspended failed');
           });
           $schedule->command('companies:check-subscriptions')->dailyAt('01:00')->withoutOverlapping()->onFailure(function () {
                Log::error('companies:check-subscriptions failed');
