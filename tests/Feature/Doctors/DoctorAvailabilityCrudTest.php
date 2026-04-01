@@ -1,0 +1,375 @@
+<?php
+
+namespace Tests\Feature\Doctors;
+
+use App\Models\Appointment;
+use App\Models\Company;
+use App\Models\DoctorAvailability;
+use App\Models\Doctors;
+use App\Models\Package;
+use App\Models\Representative;
+use App\Models\Specialty;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+use Laravel\Sanctum\Sanctum;
+use Tests\TestCase;
+
+class DoctorAvailabilityCrudTest extends TestCase
+{
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->createTestingSchema();
+    }
+
+    public function test_doctor_can_update_own_available_time(): void
+    {
+        $doctor = $this->createDoctor('doctor-update-1@example.com', '01111111191');
+        $availability = $this->createAvailability($doctor, '2026-04-20', '09:00:00', '10:00:00');
+
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $response = $this->putJson('/api/doctor/available-time/' . $availability->id, [
+            'date' => '2026-04-20',
+            'start_time' => '11:00 AM',
+            'end_time' => '12:00 PM',
+        ]);
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('data.id', $availability->id);
+        $response->assertJsonPath('data.date', '2026-04-20');
+        $response->assertJsonPath('data.start_time', '11:00 AM');
+        $response->assertJsonPath('data.end_time', '12:00 PM');
+
+        $this->assertDatabaseHas('doctor_availabilities', [
+            'id' => $availability->id,
+            'doctors_id' => $doctor->id,
+            'date' => '2026-04-20',
+            'start_time' => '11:00:00',
+            'end_time' => '12:00:00',
+        ]);
+    }
+
+    public function test_doctor_can_update_existing_available_time_with_same_values(): void
+    {
+        $doctor = $this->createDoctor('doctor-update-2@example.com', '01111111192');
+        $availability = $this->createAvailability($doctor, '2026-04-20', '09:00:00', '10:00:00');
+
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $response = $this->putJson('/api/doctor/available-time/' . $availability->id, [
+            'date' => '2026-04-20',
+            'start_time' => '09:00 AM',
+            'end_time' => '10:00 AM',
+        ]);
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('data.id', $availability->id);
+        $response->assertJsonPath('data.start_time', '09:00 AM');
+        $response->assertJsonPath('data.end_time', '10:00 AM');
+    }
+
+    public function test_doctor_update_available_time_is_rejected_on_overlap_with_another_availability(): void
+    {
+        $doctor = $this->createDoctor('doctor-update-3@example.com', '01111111193');
+        $first = $this->createAvailability($doctor, '2026-04-20', '09:00:00', '10:00:00');
+        $this->createAvailability($doctor, '2026-04-20', '10:00:00', '11:00:00');
+
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $response = $this->putJson('/api/doctor/available-time/' . $first->id, [
+            'date' => '2026-04-20',
+            'start_time' => '09:30 AM',
+            'end_time' => '10:30 AM',
+        ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonPath('message', 'This time conflicts with an existing availability');
+    }
+
+    public function test_doctor_can_delete_own_available_time_when_no_active_appointment_conflict(): void
+    {
+        $doctor = $this->createDoctor('doctor-delete-1@example.com', '01111111194');
+        $availability = $this->createAvailability($doctor, '2026-04-20', '09:00:00', '10:00:00');
+
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $response = $this->deleteJson('/api/doctor/available-time/' . $availability->id);
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('message', 'Availability deleted successfully');
+
+        $this->assertDatabaseMissing('doctor_availabilities', [
+            'id' => $availability->id,
+        ]);
+    }
+
+    public function test_doctor_delete_available_time_is_rejected_when_overlapping_active_appointment_exists(): void
+    {
+        $doctor = $this->createDoctor('doctor-delete-2@example.com', '01111111195');
+        $availability = $this->createAvailability($doctor, '2026-04-20', '09:00:00', '10:00:00');
+        $representative = $this->createRepresentative('rep-a@example.com', '01011111111');
+
+        Appointment::create([
+            'doctors_id' => $doctor->id,
+            'representative_id' => $representative->id,
+            'company_id' => $representative->company_id,
+            'date' => '2026-04-20',
+            'start_time' => '09:30:00',
+            'end_time' => '09:35:00',
+            'status' => 'pending',
+        ]);
+
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $response = $this->deleteJson('/api/doctor/available-time/' . $availability->id);
+
+        $response->assertStatus(422);
+        $response->assertJsonPath('message', 'Cannot delete availability that overlaps active appointments');
+        $this->assertDatabaseHas('doctor_availabilities', ['id' => $availability->id]);
+    }
+
+    public function test_doctor_cannot_update_or_delete_another_doctors_available_time(): void
+    {
+        $doctor = $this->createDoctor('doctor-owner@example.com', '01111111196');
+        $otherDoctor = $this->createDoctor('doctor-other@example.com', '01111111197');
+        $otherAvailability = $this->createAvailability($otherDoctor, '2026-04-20', '09:00:00', '10:00:00');
+
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $updateResponse = $this->putJson('/api/doctor/available-time/' . $otherAvailability->id, [
+            'date' => '2026-04-20',
+            'start_time' => '11:00 AM',
+            'end_time' => '12:00 PM',
+        ]);
+        $updateResponse->assertStatus(404);
+
+        $deleteResponse = $this->deleteJson('/api/doctor/available-time/' . $otherAvailability->id);
+        $deleteResponse->assertStatus(404);
+    }
+
+    public function test_update_available_time_validates_time_format_and_start_before_end(): void
+    {
+        $doctor = $this->createDoctor('doctor-validate-1@example.com', '01111111198');
+        $availability = $this->createAvailability($doctor, '2026-04-20', '09:00:00', '10:00:00');
+
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $invalidFormatResponse = $this->putJson('/api/doctor/available-time/' . $availability->id, [
+            'date' => '2026-04-20',
+            'start_time' => '15:00',
+            'end_time' => '16:00',
+        ]);
+        $invalidFormatResponse->assertStatus(422);
+        $invalidFormatResponse->assertJsonPath('message', 'Invalid time format, please use hh:mm AM/PM');
+
+        $invalidRangeResponse = $this->putJson('/api/doctor/available-time/' . $availability->id, [
+            'date' => '2026-04-20',
+            'start_time' => '03:00 PM',
+            'end_time' => '02:00 PM',
+        ]);
+        $invalidRangeResponse->assertStatus(422);
+        $invalidRangeResponse->assertJsonPath('message', 'Start time must be before end time');
+    }
+
+    public function test_save_available_time_rejects_overlapping_slot(): void
+    {
+        $doctor = $this->createDoctor('doctor-create-1@example.com', '01111111199');
+        $this->createAvailability($doctor, '2026-04-20', '09:00:00', '10:00:00');
+
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $response = $this->putJson('/api/doctor/save-available-time', [
+            'date' => '2026-04-20',
+            'start_time' => '09:30 AM',
+            'end_time' => '10:30 AM',
+        ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonPath('message', 'This time conflicts with an existing availability');
+    }
+
+    public function test_save_available_time_validates_start_before_end(): void
+    {
+        $doctor = $this->createDoctor('doctor-create-2@example.com', '01111111200');
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $response = $this->putJson('/api/doctor/save-available-time', [
+            'date' => '2026-04-20',
+            'start_time' => '03:00 PM',
+            'end_time' => '02:00 PM',
+        ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonPath('message', 'Start time must be before end time');
+    }
+
+    private function createDoctor(string $email, string $phone): Doctors
+    {
+        $specialty = Specialty::firstOrCreate(['name' => 'Cardiology']);
+
+        return Doctors::create([
+            'name' => 'Doctor ' . str_replace(['@example.com', '-', '_'], '', $email),
+            'email' => $email,
+            'phone' => $phone,
+            'password' => 'secret123',
+            'specialty_id' => $specialty->id,
+            'status' => 'active',
+        ]);
+    }
+
+    private function createAvailability(Doctors $doctor, string $date, string $start, string $end): DoctorAvailability
+    {
+        return DoctorAvailability::create([
+            'doctors_id' => $doctor->id,
+            'date' => $date,
+            'start_time' => $start,
+            'end_time' => $end,
+            'status' => 'available',
+        ]);
+    }
+
+    private function createRepresentative(string $email, string $phone): Representative
+    {
+        $package = Package::firstOrCreate(
+            ['name' => 'Quarterly'],
+            [
+                'price' => 1000,
+                'duration' => 90,
+                'plan_type' => 'quarterly',
+                'billing_months' => 3,
+            ]
+        );
+
+        $company = Company::create([
+            'name' => 'Company ' . $phone,
+            'package_id' => $package->id,
+            'phone' => '012' . substr($phone, -8),
+            'email' => 'company-' . str_replace(['@', '.'], '-', $email),
+            'password' => 'secret123',
+            'status' => 'active',
+        ]);
+
+        return Representative::create([
+            'name' => 'Rep ' . $phone,
+            'email' => $email,
+            'phone' => $phone,
+            'password' => 'secret123',
+            'company_id' => $company->id,
+            'status' => 'active',
+        ]);
+    }
+
+    private function createTestingSchema(): void
+    {
+        foreach ([
+            'personal_access_tokens',
+            'doctor_availabilities',
+            'appointments',
+            'representatives',
+            'companies',
+            'packages',
+            'doctors',
+            'specialties',
+        ] as $table) {
+            Schema::dropIfExists($table);
+        }
+
+        Schema::create('specialties', function (Blueprint $table) {
+            $table->id();
+            $table->string('name')->unique();
+            $table->string('slug')->unique();
+            $table->timestamps();
+        });
+
+        Schema::create('doctors', function (Blueprint $table) {
+            $table->id();
+            $table->string('name');
+            $table->string('email')->unique();
+            $table->string('phone')->nullable();
+            $table->string('password');
+            $table->string('address_1')->nullable();
+            $table->string('address_2')->nullable();
+            $table->unsignedBigInteger('specialty_id')->nullable();
+            $table->enum('status', ['active', 'busy'])->default('active');
+            $table->date('from_date')->nullable();
+            $table->date('to_date')->nullable();
+            $table->text('fcm_token')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('packages', function (Blueprint $table) {
+            $table->id();
+            $table->string('name');
+            $table->decimal('price', 10, 2);
+            $table->integer('duration');
+            $table->string('plan_type')->default('custom_days');
+            $table->unsignedTinyInteger('billing_months')->nullable();
+            $table->text('description')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('companies', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('package_id');
+            $table->string('name');
+            $table->string('phone')->nullable();
+            $table->string('email')->unique();
+            $table->string('password');
+            $table->integer('visits_per_day')->nullable();
+            $table->integer('num_of_reps')->nullable();
+            $table->date('subscription_start')->nullable();
+            $table->date('subscription_end')->nullable();
+            $table->enum('status', ['active', 'inactive'])->default('active');
+            $table->text('fcm_token')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('representatives', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('company_id');
+            $table->string('name');
+            $table->string('email')->unique();
+            $table->string('phone')->unique();
+            $table->string('password');
+            $table->enum('status', ['active', 'inactive'])->default('active');
+            $table->text('fcm_token')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('appointments', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('doctors_id');
+            $table->unsignedBigInteger('representative_id');
+            $table->unsignedBigInteger('company_id');
+            $table->time('start_time');
+            $table->time('end_time');
+            $table->date('date')->nullable();
+            $table->enum('status', ['cancelled', 'confirmed', 'pending', 'left', 'suspended'])->default('pending');
+            $table->string('cancelled_by')->nullable();
+            $table->uuid('appointment_code')->unique();
+            $table->timestamps();
+        });
+
+        Schema::create('doctor_availabilities', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('doctors_id');
+            $table->string('date');
+            $table->time('start_time');
+            $table->time('end_time');
+            $table->enum('status', ['available', 'canceled', 'booked', 'busy'])->default('available');
+            $table->timestamps();
+        });
+
+        Schema::create('personal_access_tokens', function (Blueprint $table) {
+            $table->id();
+            $table->morphs('tokenable');
+            $table->string('name');
+            $table->string('token', 64)->unique();
+            $table->text('abilities')->nullable();
+            $table->timestamp('last_used_at')->nullable();
+            $table->timestamp('expires_at')->nullable();
+            $table->timestamps();
+        });
+    }
+}

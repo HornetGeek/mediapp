@@ -127,6 +127,8 @@ Route::prefix('doctor')->group(function () {
             Route::get('doctor-available-times', 'availableTimes');
             Route::get('profile', 'getDoctorProfile');
             Route::put('save-available-time', 'saveAvailableTimes');
+            Route::put('available-time/{availability_id}', 'updateAvailableTime');
+            Route::delete('available-time/{availability_id}', 'deleteAvailableTime');
             // Route::post('add-available-time', 'addAvailableTime');
             Route::get('/doctor/appointments', 'getDoctorAppointments');
             Route::put('/cancel-appointment/{book_id}', 'cancellationAppointment');
