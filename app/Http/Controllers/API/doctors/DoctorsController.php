@@ -169,7 +169,7 @@ class DoctorsController extends Controller
         $doctor = $request->user();
 
         $validator = Validator::make($request->all(), [
-            'date' => ['required', 'string'],
+            'date' => ['required', 'date_format:Y-m-d'],
             'start_time' => ['required', 'string'],
             'end_time' => ['required', 'string'],
             'status' => ['nullable', 'string'],
@@ -179,6 +179,10 @@ class DoctorsController extends Controller
             return ApiResponse::sendResponse(422,$validator->errors()->first(),[]);
         }
         $validated = $validator->validated();
+        $normalizedDate = $this->normalizeAvailabilityDate($validated['date']);
+        if (isset($normalizedDate['error'])) {
+            return ApiResponse::sendResponse(422, $normalizedDate['error'], []);
+        }
 
         $normalizedTimes = $this->normalizeAvailabilityTimes($validated['start_time'], $validated['end_time']);
         if (isset($normalizedTimes['error'])) {
@@ -187,7 +191,7 @@ class DoctorsController extends Controller
 
         if ($this->hasAvailabilityOverlap(
             (int) $doctor->id,
-            $validated['date'],
+            $normalizedDate['date'],
             $normalizedTimes['start_time'],
             $normalizedTimes['end_time']
         )) {
@@ -195,7 +199,7 @@ class DoctorsController extends Controller
         }
 
         $doctor->availableTimes()->create([
-            'date' => $validated['date'],
+            'date' => $normalizedDate['date'],
             'start_time' => $normalizedTimes['start_time'],
             'end_time' => $normalizedTimes['end_time'],
             'status' => $validated['status'] ?? 'available',
@@ -208,7 +212,7 @@ class DoctorsController extends Controller
         $doctor = $request->user();
 
         $validator = Validator::make($request->all(), [
-            'date' => ['required', 'string'],
+            'date' => ['required', 'date_format:Y-m-d'],
             'start_time' => ['required', 'string'],
             'end_time' => ['required', 'string'],
         ]);
@@ -227,14 +231,23 @@ class DoctorsController extends Controller
         }
 
         $validated = $validator->validated();
+        $normalizedDate = $this->normalizeAvailabilityDate($validated['date']);
+        if (isset($normalizedDate['error'])) {
+            return ApiResponse::sendResponse(422, $normalizedDate['error'], []);
+        }
+
         $normalizedTimes = $this->normalizeAvailabilityTimes($validated['start_time'], $validated['end_time']);
         if (isset($normalizedTimes['error'])) {
             return ApiResponse::sendResponse(422, $normalizedTimes['error'], []);
         }
 
+        $isNoOpUpdate = $availability->date === $normalizedDate['date']
+            && $availability->start_time === $normalizedTimes['start_time']
+            && $availability->end_time === $normalizedTimes['end_time'];
+
         if ($this->hasAvailabilityOverlap(
             (int) $doctor->id,
-            $validated['date'],
+            $normalizedDate['date'],
             $normalizedTimes['start_time'],
             $normalizedTimes['end_time'],
             (int) $availability->id
@@ -242,9 +255,9 @@ class DoctorsController extends Controller
             return ApiResponse::sendResponse(422, 'This time conflicts with an existing availability', []);
         }
 
-        if ($this->hasActiveAppointmentOverlap(
+        if (!$isNoOpUpdate && $this->hasActiveAppointmentOverlap(
             (int) $doctor->id,
-            $validated['date'],
+            $normalizedDate['date'],
             $normalizedTimes['start_time'],
             $normalizedTimes['end_time']
         )) {
@@ -252,7 +265,7 @@ class DoctorsController extends Controller
         }
 
         $availability->update([
-            'date' => $validated['date'],
+            'date' => $normalizedDate['date'],
             'start_time' => $normalizedTimes['start_time'],
             'end_time' => $normalizedTimes['end_time'],
         ]);
@@ -775,11 +788,11 @@ class DoctorsController extends Controller
 
     private function normalizeAvailabilityTimes(string $startTime, string $endTime): array
     {
-        try {
-            $normalizedStartTime = Carbon::createFromFormat('h:i A', $startTime)->format('H:i:s');
-            $normalizedEndTime = Carbon::createFromFormat('h:i A', $endTime)->format('H:i:s');
-        } catch (\Exception $exception) {
-            return ['error' => 'Invalid time format, please use hh:mm AM/PM'];
+        $normalizedStartTime = $this->normalizeAvailabilityTime($startTime);
+        $normalizedEndTime = $this->normalizeAvailabilityTime($endTime);
+
+        if ($normalizedStartTime === null || $normalizedEndTime === null) {
+            return ['error' => 'Invalid time format, please use hh:mm AM/PM or HH:mm'];
         }
 
         if ($normalizedStartTime >= $normalizedEndTime) {
@@ -792,6 +805,52 @@ class DoctorsController extends Controller
         ];
     }
 
+    private function normalizeAvailabilityDate(string $date): array
+    {
+        $trimmedDate = trim($date);
+
+        try {
+            $normalizedDate = Carbon::createFromFormat('Y-m-d', $trimmedDate);
+        } catch (\Exception $exception) {
+            return ['error' => 'Invalid date format, please use YYYY-MM-DD'];
+        }
+
+        if ($normalizedDate->format('Y-m-d') !== $trimmedDate) {
+            return ['error' => 'Invalid date format, please use YYYY-MM-DD'];
+        }
+
+        return ['date' => $normalizedDate->format('Y-m-d')];
+    }
+
+    private function normalizeAvailabilityTime(string $time): ?string
+    {
+        $trimmedTime = trim($time);
+
+        if (preg_match('/^(0?[1-9]|1[0-2]):([0-5][0-9])\s*([AaPp][Mm])$/', $trimmedTime, $matches) === 1) {
+            $hour = (int) $matches[1];
+            $minute = (int) $matches[2];
+            $meridiem = strtoupper($matches[3]);
+
+            if ($meridiem === 'AM' && $hour === 12) {
+                $hour = 0;
+            } elseif ($meridiem === 'PM' && $hour !== 12) {
+                $hour += 12;
+            }
+
+            return sprintf('%02d:%02d:00', $hour, $minute);
+        }
+
+        if (preg_match('/^([01]?[0-9]|2[0-3]):([0-5][0-9])$/', $trimmedTime, $matches) === 1) {
+            return sprintf('%02d:%02d:00', (int) $matches[1], (int) $matches[2]);
+        }
+
+        if (preg_match('/^([01]?[0-9]|2[0-3]):([0-5][0-9]):([0-5][0-9])$/', $trimmedTime, $matches) === 1) {
+            return sprintf('%02d:%02d:%02d', (int) $matches[1], (int) $matches[2], (int) $matches[3]);
+        }
+
+        return null;
+    }
+
     private function hasAvailabilityOverlap(
         int $doctorId,
         string $date,
@@ -802,6 +861,7 @@ class DoctorsController extends Controller
         return DoctorAvailability::query()
             ->where('doctors_id', $doctorId)
             ->where('date', $date)
+            ->where('status', 'available')
             ->when($ignoredAvailabilityId !== null, function ($query) use ($ignoredAvailabilityId) {
                 $query->where('id', '!=', $ignoredAvailabilityId);
             })
