@@ -169,11 +169,11 @@ class DoctorsController extends Controller
         $doctor = $request->user();
 
         $validator = Validator::make($request->all(), [
-            'date' => ['required', 'date_format:Y-m-d'],
+            'date' => ['required', 'string'],
             'start_time' => ['required', 'string'],
             'end_time' => ['required', 'string'],
             'ends_next_day' => ['nullable', 'boolean'],
-            'status' => ['nullable', 'string'],
+            'status' => ['nullable', 'in:available,canceled,booked,busy'],
         ]);
 
         if ($validator->fails()) {
@@ -191,23 +191,44 @@ class DoctorsController extends Controller
             return ApiResponse::sendResponse(422, $normalizedTimes['error'], []);
         }
 
+        $normalizedStatus = $validated['status'] ?? 'available';
+        $existingAvailableWeekdaySlot = null;
+
+        if ($normalizedStatus === 'available') {
+            $existingAvailableWeekdaySlot = $this->findDoctorAvailableWeekdaySlot(
+                (int) $doctor->id,
+                $normalizedDate['date']
+            );
+        }
+
         if ($this->hasAvailabilityOverlap(
             (int) $doctor->id,
             $normalizedDate['date'],
             $normalizedTimes['start_time'],
             $normalizedTimes['end_time'],
-            $normalizedTimes['ends_next_day']
+            $normalizedTimes['ends_next_day'],
+            $existingAvailableWeekdaySlot?->id
         )) {
             return ApiResponse::sendResponse(422, 'This time conflicts with an existing availability', []);
         }
 
-        $doctor->availableTimes()->create([
-            'date' => $normalizedDate['date'],
-            'start_time' => $normalizedTimes['start_time'],
-            'end_time' => $normalizedTimes['end_time'],
-            'ends_next_day' => $normalizedTimes['ends_next_day'],
-            'status' => $validated['status'] ?? 'available',
-        ]);
+        if ($existingAvailableWeekdaySlot) {
+            $existingAvailableWeekdaySlot->update([
+                'date' => $normalizedDate['date'],
+                'start_time' => $normalizedTimes['start_time'],
+                'end_time' => $normalizedTimes['end_time'],
+                'ends_next_day' => $normalizedTimes['ends_next_day'],
+            ]);
+        } else {
+            $doctor->availableTimes()->create([
+                'date' => $normalizedDate['date'],
+                'start_time' => $normalizedTimes['start_time'],
+                'end_time' => $normalizedTimes['end_time'],
+                'ends_next_day' => $normalizedTimes['ends_next_day'],
+                'status' => $normalizedStatus,
+            ]);
+        }
+
         return ApiResponse::sendResponse(200, 'Availabilities saved successfully', DoctorResource::make($doctor->load('availableTimes')));
     }
 
@@ -216,7 +237,7 @@ class DoctorsController extends Controller
         $doctor = $request->user();
 
         $validator = Validator::make($request->all(), [
-            'date' => ['required', 'date_format:Y-m-d'],
+            'date' => ['required', 'string'],
             'start_time' => ['required', 'string'],
             'end_time' => ['required', 'string'],
             'ends_next_day' => ['nullable', 'boolean'],
@@ -247,7 +268,20 @@ class DoctorsController extends Controller
             return ApiResponse::sendResponse(422, $normalizedTimes['error'], []);
         }
 
-        $isNoOpUpdate = $availability->date === $normalizedDate['date']
+        $existingAvailabilityWeekday = $this->normalizeStoredAvailabilityWeekday((string) $availability->date);
+        if ($existingAvailabilityWeekday === null) {
+            $existingAvailabilityWeekday = strtolower(trim((string) $availability->date));
+        }
+
+        if ($normalizedDate['date'] !== $existingAvailabilityWeekday && $this->findDoctorAvailableWeekdaySlot(
+            (int) $doctor->id,
+            $normalizedDate['date'],
+            (int) $availability->id
+        )) {
+            return ApiResponse::sendResponse(422, 'An available slot already exists for this weekday', []);
+        }
+
+        $isNoOpUpdate = $existingAvailabilityWeekday === $normalizedDate['date']
             && $availability->start_time === $normalizedTimes['start_time']
             && $availability->end_time === $normalizedTimes['end_time']
             && (bool) $availability->ends_next_day === $normalizedTimes['ends_next_day'];
@@ -823,19 +857,12 @@ class DoctorsController extends Controller
 
     private function normalizeAvailabilityDate(string $date): array
     {
-        $trimmedDate = trim($date);
-
-        try {
-            $normalizedDate = Carbon::createFromFormat('Y-m-d', $trimmedDate);
-        } catch (\Exception $exception) {
-            return ['error' => 'Invalid date format, please use YYYY-MM-DD'];
+        $normalizedWeekday = $this->normalizeStoredAvailabilityWeekday($date);
+        if ($normalizedWeekday === null) {
+            return ['error' => 'Invalid date format, please use weekday name or YYYY-MM-DD'];
         }
 
-        if ($normalizedDate->format('Y-m-d') !== $trimmedDate) {
-            return ['error' => 'Invalid date format, please use YYYY-MM-DD'];
-        }
-
-        return ['date' => $normalizedDate->format('Y-m-d')];
+        return ['date' => $normalizedWeekday];
     }
 
     private function normalizeAvailabilityTime(string $time): ?string
@@ -875,32 +902,38 @@ class DoctorsController extends Controller
         bool $endsNextDay,
         ?int $ignoredAvailabilityId = null
     ): bool {
-        $targetInterval = $this->buildInterval($date, $startTime, $endTime, $endsNextDay);
-        $windowStart = $targetInterval['start_at']->copy()->subDay()->toDateString();
-        $windowEnd = $targetInterval['end_at']->toDateString();
+        $targetWeekday = $this->normalizeStoredAvailabilityWeekday($date);
+        if ($targetWeekday === null) {
+            return false;
+        }
+
+        $targetInterval = $this->buildWeekdayInterval($targetWeekday, $startTime, $endTime, $endsNextDay);
 
         $candidateAvailabilities = DoctorAvailability::query()
             ->where('doctors_id', $doctorId)
             ->where('status', 'available')
-            ->where('date', '>=', $windowStart)
-            ->where('date', '<=', $windowEnd)
             ->when($ignoredAvailabilityId !== null, function ($query) use ($ignoredAvailabilityId) {
                 $query->where('id', '!=', $ignoredAvailabilityId);
             })
             ->get(['id', 'date', 'start_time', 'end_time', 'ends_next_day']);
 
         foreach ($candidateAvailabilities as $availability) {
+            $existingWeekday = $this->normalizeStoredAvailabilityWeekday((string) $availability->date);
+            if ($existingWeekday === null) {
+                continue;
+            }
+
             $existingEndsNextDay = (bool) $availability->ends_next_day
                 || $this->isLegacyOvernightInterval((string) $availability->start_time, (string) $availability->end_time);
 
-            $existingInterval = $this->buildInterval(
-                (string) $availability->date,
+            $existingInterval = $this->buildWeekdayInterval(
+                $existingWeekday,
                 (string) $availability->start_time,
                 (string) $availability->end_time,
                 $existingEndsNextDay
             );
 
-            if ($this->intervalsOverlap(
+            if ($this->recurringIntervalsOverlap(
                 $targetInterval['start_at'],
                 $targetInterval['end_at'],
                 $existingInterval['start_at'],
@@ -920,15 +953,18 @@ class DoctorsController extends Controller
         string $endTime,
         bool $endsNextDay
     ): bool {
-        $targetInterval = $this->buildInterval($date, $startTime, $endTime, $endsNextDay);
-        $windowStart = $targetInterval['start_at']->copy()->subDay()->toDateString();
-        $windowEnd = $targetInterval['end_at']->toDateString();
+        $targetWeekday = $this->normalizeStoredAvailabilityWeekday($date);
+        if ($targetWeekday === null) {
+            return false;
+        }
+
+        $targetInterval = $this->buildWeekdayInterval($targetWeekday, $startTime, $endTime, $endsNextDay);
+        $today = Carbon::today()->toDateString();
 
         $candidateAppointments = Appointment::query()
             ->where('doctors_id', $doctorId)
             ->whereIn('status', ['pending', 'confirmed'])
-            ->whereDate('date', '>=', $windowStart)
-            ->whereDate('date', '<=', $windowEnd)
+            ->whereDate('date', '>=', $today)
             ->get(['id', 'date', 'start_time', 'end_time']);
 
         foreach ($candidateAppointments as $appointment) {
@@ -937,14 +973,14 @@ class DoctorsController extends Controller
                 (string) $appointment->end_time
             );
 
-            $appointmentInterval = $this->buildInterval(
-                Carbon::parse($appointment->date)->toDateString(),
+            $appointmentInterval = $this->buildWeekdayInterval(
+                strtolower(Carbon::parse($appointment->date)->format('l')),
                 Carbon::parse($appointment->start_time)->format('H:i:s'),
                 Carbon::parse($appointment->end_time)->format('H:i:s'),
                 $appointmentEndsNextDay
             );
 
-            if ($this->intervalsOverlap(
+            if ($this->recurringIntervalsOverlap(
                 $targetInterval['start_at'],
                 $targetInterval['end_at'],
                 $appointmentInterval['start_at'],
@@ -957,10 +993,17 @@ class DoctorsController extends Controller
         return false;
     }
 
-    private function buildInterval(string $date, string $startTime, string $endTime, bool $endsNextDay): array
+    private function buildWeekdayInterval(string $weekday, string $startTime, string $endTime, bool $endsNextDay): array
     {
-        $startAt = Carbon::parse($date . ' ' . $startTime);
-        $endAt = Carbon::parse($date . ' ' . $endTime);
+        $weekdayMap = $this->weekdayToIndexMap();
+        $weekdayIndex = $weekdayMap[$weekday] ?? 0;
+        $anchorSunday = Carbon::create(2026, 1, 4, 0, 0, 0);
+
+        [$startHour, $startMinute, $startSecond] = array_map('intval', explode(':', $startTime));
+        [$endHour, $endMinute, $endSecond] = array_map('intval', explode(':', $endTime));
+
+        $startAt = $anchorSunday->copy()->addDays($weekdayIndex)->setTime($startHour, $startMinute, $startSecond);
+        $endAt = $anchorSunday->copy()->addDays($weekdayIndex)->setTime($endHour, $endMinute, $endSecond);
 
         if ($endsNextDay) {
             $endAt->addDay();
@@ -975,6 +1018,84 @@ class DoctorsController extends Controller
     private function intervalsOverlap(Carbon $leftStartAt, Carbon $leftEndAt, Carbon $rightStartAt, Carbon $rightEndAt): bool
     {
         return $leftStartAt->lt($rightEndAt) && $leftEndAt->gt($rightStartAt);
+    }
+
+    private function recurringIntervalsOverlap(Carbon $leftStartAt, Carbon $leftEndAt, Carbon $rightStartAt, Carbon $rightEndAt): bool
+    {
+        foreach ([-7, 0, 7] as $shiftDays) {
+            if ($this->intervalsOverlap(
+                $leftStartAt,
+                $leftEndAt,
+                $rightStartAt->copy()->addDays($shiftDays),
+                $rightEndAt->copy()->addDays($shiftDays)
+            )) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function findDoctorAvailableWeekdaySlot(
+        int $doctorId,
+        string $weekday,
+        ?int $ignoredAvailabilityId = null
+    ): ?DoctorAvailability {
+        $candidateAvailabilities = DoctorAvailability::query()
+            ->where('doctors_id', $doctorId)
+            ->where('status', 'available')
+            ->when($ignoredAvailabilityId !== null, function ($query) use ($ignoredAvailabilityId) {
+                $query->where('id', '!=', $ignoredAvailabilityId);
+            })
+            ->orderByDesc('updated_at')
+            ->orderByDesc('id')
+            ->get(['id', 'date', 'updated_at']);
+
+        foreach ($candidateAvailabilities as $availability) {
+            if ($this->normalizeStoredAvailabilityWeekday((string) $availability->date) === $weekday) {
+                return $availability;
+            }
+        }
+
+        return null;
+    }
+
+    private function normalizeStoredAvailabilityWeekday(string $date): ?string
+    {
+        $trimmedDate = trim($date);
+        if ($trimmedDate === '') {
+            return null;
+        }
+
+        $normalizedWeekday = strtolower($trimmedDate);
+        if (array_key_exists($normalizedWeekday, $this->weekdayToIndexMap())) {
+            return $normalizedWeekday;
+        }
+
+        try {
+            $normalizedDate = Carbon::createFromFormat('Y-m-d', $trimmedDate);
+        } catch (\Exception $exception) {
+            return null;
+        }
+
+        if ($normalizedDate->format('Y-m-d') !== $trimmedDate) {
+            return null;
+        }
+
+        return strtolower($normalizedDate->format('l'));
+    }
+
+    private function weekdayToIndexMap(): array
+    {
+        return [
+            'sunday' => 0,
+            'monday' => 1,
+            'tuesday' => 2,
+            'wednesday' => 3,
+            'thursday' => 4,
+            'friday' => 5,
+            'saturday' => 6,
+        ];
     }
 
     private function isLegacyOvernightInterval(string $startTime, string $endTime): bool
