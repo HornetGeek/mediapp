@@ -69,6 +69,39 @@ class DoctorAvailabilityCrudTest extends TestCase
         $response->assertJsonPath('data.end_time', '10:00 AM');
     }
 
+    public function test_doctor_can_update_and_save_available_time_with_24_hour_input(): void
+    {
+        $doctor = $this->createDoctor('doctor-update-24h@example.com', '01111111210');
+        $availability = $this->createAvailability($doctor, '2026-04-20', '09:00:00', '10:00:00');
+
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $updateResponse = $this->putJson('/api/doctor/available-time/' . $availability->id, [
+            'date' => '2026-04-20',
+            'start_time' => '13:00',
+            'end_time' => '14:00',
+        ]);
+
+        $updateResponse->assertStatus(200);
+        $updateResponse->assertJsonPath('data.start_time', '01:00 PM');
+        $updateResponse->assertJsonPath('data.end_time', '02:00 PM');
+
+        $saveResponse = $this->putJson('/api/doctor/save-available-time', [
+            'date' => '2026-04-21',
+            'start_time' => '15:30',
+            'end_time' => '16:30:00',
+        ]);
+
+        $saveResponse->assertStatus(200);
+        $this->assertDatabaseHas('doctor_availabilities', [
+            'doctors_id' => $doctor->id,
+            'date' => '2026-04-21',
+            'start_time' => '15:30:00',
+            'end_time' => '16:30:00',
+            'status' => 'available',
+        ]);
+    }
+
     public function test_doctor_update_available_time_is_rejected_on_overlap_with_another_availability(): void
     {
         $doctor = $this->createDoctor('doctor-update-3@example.com', '01111111193');
@@ -85,6 +118,87 @@ class DoctorAvailabilityCrudTest extends TestCase
 
         $response->assertStatus(422);
         $response->assertJsonPath('message', 'This time conflicts with an existing availability');
+    }
+
+    public function test_doctor_update_available_time_ignores_overlap_with_non_available_slots(): void
+    {
+        $doctor = $this->createDoctor('doctor-update-status-scope@example.com', '01111111211');
+        $availability = $this->createAvailability($doctor, '2026-04-20', '09:00:00', '10:00:00');
+        $this->createAvailability($doctor, '2026-04-20', '09:30:00', '10:30:00', 'busy');
+        $this->createAvailability($doctor, '2026-04-20', '09:45:00', '10:45:00', 'booked');
+        $this->createAvailability($doctor, '2026-04-20', '08:45:00', '09:45:00', 'canceled');
+
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $response = $this->putJson('/api/doctor/available-time/' . $availability->id, [
+            'date' => '2026-04-20',
+            'start_time' => '09:35 AM',
+            'end_time' => '10:35 AM',
+        ]);
+
+        $response->assertStatus(200);
+        $this->assertDatabaseHas('doctor_availabilities', [
+            'id' => $availability->id,
+            'start_time' => '09:35:00',
+            'end_time' => '10:35:00',
+        ]);
+    }
+
+    public function test_doctor_update_available_time_allows_no_op_when_active_appointment_overlaps(): void
+    {
+        $doctor = $this->createDoctor('doctor-update-no-op@example.com', '01111111212');
+        $availability = $this->createAvailability($doctor, '2026-04-20', '09:00:00', '10:00:00');
+        $representative = $this->createRepresentative('rep-no-op@example.com', '01011111112');
+
+        Appointment::create([
+            'doctors_id' => $doctor->id,
+            'representative_id' => $representative->id,
+            'company_id' => $representative->company_id,
+            'date' => '2026-04-20',
+            'start_time' => '09:30:00',
+            'end_time' => '09:35:00',
+            'status' => 'pending',
+        ]);
+
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $response = $this->putJson('/api/doctor/available-time/' . $availability->id, [
+            'date' => '2026-04-20',
+            'start_time' => '09:00 AM',
+            'end_time' => '10:00 AM',
+        ]);
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('data.start_time', '09:00 AM');
+        $response->assertJsonPath('data.end_time', '10:00 AM');
+    }
+
+    public function test_doctor_update_available_time_is_rejected_when_real_change_overlaps_active_appointment(): void
+    {
+        $doctor = $this->createDoctor('doctor-update-appointment-overlap@example.com', '01111111213');
+        $availability = $this->createAvailability($doctor, '2026-04-20', '09:00:00', '10:00:00');
+        $representative = $this->createRepresentative('rep-overlap@example.com', '01011111113');
+
+        Appointment::create([
+            'doctors_id' => $doctor->id,
+            'representative_id' => $representative->id,
+            'company_id' => $representative->company_id,
+            'date' => '2026-04-20',
+            'start_time' => '09:30:00',
+            'end_time' => '09:35:00',
+            'status' => 'pending',
+        ]);
+
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $response = $this->putJson('/api/doctor/available-time/' . $availability->id, [
+            'date' => '2026-04-20',
+            'start_time' => '09:20 AM',
+            'end_time' => '10:20 AM',
+        ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonPath('message', 'Cannot update availability that overlaps active appointments');
     }
 
     public function test_doctor_can_delete_own_available_time_when_no_active_appointment_conflict(): void
@@ -157,16 +271,24 @@ class DoctorAvailabilityCrudTest extends TestCase
 
         $invalidFormatResponse = $this->putJson('/api/doctor/available-time/' . $availability->id, [
             'date' => '2026-04-20',
-            'start_time' => '15:00',
-            'end_time' => '16:00',
+            'start_time' => '11:70 PM',
+            'end_time' => '12:00 AM',
         ]);
         $invalidFormatResponse->assertStatus(422);
-        $invalidFormatResponse->assertJsonPath('message', 'Invalid time format, please use hh:mm AM/PM');
+        $invalidFormatResponse->assertJsonPath('message', 'Invalid time format, please use hh:mm AM/PM or HH:mm');
+
+        $invalidAmPmResponse = $this->putJson('/api/doctor/available-time/' . $availability->id, [
+            'date' => '2026-04-20',
+            'start_time' => '00:30 AM',
+            'end_time' => '01:30 AM',
+        ]);
+        $invalidAmPmResponse->assertStatus(422);
+        $invalidAmPmResponse->assertJsonPath('message', 'Invalid time format, please use hh:mm AM/PM or HH:mm');
 
         $invalidRangeResponse = $this->putJson('/api/doctor/available-time/' . $availability->id, [
             'date' => '2026-04-20',
-            'start_time' => '03:00 PM',
-            'end_time' => '02:00 PM',
+            'start_time' => '15:00',
+            'end_time' => '14:00',
         ]);
         $invalidRangeResponse->assertStatus(422);
         $invalidRangeResponse->assertJsonPath('message', 'Start time must be before end time');
@@ -187,6 +309,53 @@ class DoctorAvailabilityCrudTest extends TestCase
 
         $response->assertStatus(422);
         $response->assertJsonPath('message', 'This time conflicts with an existing availability');
+    }
+
+    public function test_save_available_time_ignores_overlap_with_non_available_slots(): void
+    {
+        $doctor = $this->createDoctor('doctor-create-status-scope@example.com', '01111111214');
+        $this->createAvailability($doctor, '2026-04-20', '09:00:00', '10:00:00', 'booked');
+        $this->createAvailability($doctor, '2026-04-20', '09:15:00', '10:15:00', 'busy');
+
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $response = $this->putJson('/api/doctor/save-available-time', [
+            'date' => '2026-04-20',
+            'start_time' => '09:30 AM',
+            'end_time' => '10:30 AM',
+        ]);
+
+        $response->assertStatus(200);
+        $this->assertDatabaseHas('doctor_availabilities', [
+            'doctors_id' => $doctor->id,
+            'date' => '2026-04-20',
+            'start_time' => '09:30:00',
+            'end_time' => '10:30:00',
+            'status' => 'available',
+        ]);
+    }
+
+    public function test_save_available_time_validates_time_and_date_format(): void
+    {
+        $doctor = $this->createDoctor('doctor-create-validate-format@example.com', '01111111215');
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $invalidTimeResponse = $this->putJson('/api/doctor/save-available-time', [
+            'date' => '2026-04-20',
+            'start_time' => '25:00',
+            'end_time' => '26:00',
+        ]);
+
+        $invalidTimeResponse->assertStatus(422);
+        $invalidTimeResponse->assertJsonPath('message', 'Invalid time format, please use hh:mm AM/PM or HH:mm');
+
+        $invalidDateResponse = $this->putJson('/api/doctor/save-available-time', [
+            'date' => '20-04-2026',
+            'start_time' => '09:00 AM',
+            'end_time' => '10:00 AM',
+        ]);
+
+        $invalidDateResponse->assertStatus(422);
     }
 
     public function test_save_available_time_validates_start_before_end(): void
@@ -218,14 +387,20 @@ class DoctorAvailabilityCrudTest extends TestCase
         ]);
     }
 
-    private function createAvailability(Doctors $doctor, string $date, string $start, string $end): DoctorAvailability
+    private function createAvailability(
+        Doctors $doctor,
+        string $date,
+        string $start,
+        string $end,
+        string $status = 'available'
+    ): DoctorAvailability
     {
         return DoctorAvailability::create([
             'doctors_id' => $doctor->id,
             'date' => $date,
             'start_time' => $start,
             'end_time' => $end,
-            'status' => 'available',
+            'status' => $status,
         ]);
     }
 
