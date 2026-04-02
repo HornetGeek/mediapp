@@ -30,21 +30,21 @@ class DoctorAvailabilityCrudTest extends TestCase
         Sanctum::actingAs($doctor, ['doctor']);
 
         $response = $this->putJson('/api/doctor/available-time/' . $availability->id, [
-            'date' => '2026-04-20',
+            'date' => 'monday',
             'start_time' => '11:00 AM',
             'end_time' => '12:00 PM',
         ]);
 
         $response->assertStatus(200);
         $response->assertJsonPath('data.id', $availability->id);
-        $response->assertJsonPath('data.date', '2026-04-20');
+        $response->assertJsonPath('data.date', 'monday');
         $response->assertJsonPath('data.start_time', '11:00 AM');
         $response->assertJsonPath('data.end_time', '12:00 PM');
 
         $this->assertDatabaseHas('doctor_availabilities', [
             'id' => $availability->id,
             'doctors_id' => $doctor->id,
-            'date' => '2026-04-20',
+            'date' => 'monday',
             'start_time' => '11:00:00',
             'end_time' => '12:00:00',
         ]);
@@ -96,7 +96,7 @@ class DoctorAvailabilityCrudTest extends TestCase
         $saveResponse->assertStatus(200);
         $this->assertDatabaseHas('doctor_availabilities', [
             'doctors_id' => $doctor->id,
-            'date' => '2026-04-21',
+            'date' => 'tuesday',
             'start_time' => '15:30:00',
             'end_time' => '16:30:00',
             'status' => 'available',
@@ -124,7 +124,7 @@ class DoctorAvailabilityCrudTest extends TestCase
 
         $this->assertDatabaseHas('doctor_availabilities', [
             'id' => $availability->id,
-            'date' => '2026-04-20',
+            'date' => 'monday',
             'start_time' => '22:00:00',
             'end_time' => '02:00:00',
             'ends_next_day' => 1,
@@ -147,6 +147,35 @@ class DoctorAvailabilityCrudTest extends TestCase
 
         $response->assertStatus(422);
         $response->assertJsonPath('message', 'This time conflicts with an existing availability');
+    }
+
+    public function test_doctor_update_available_time_rejects_move_to_weekday_with_existing_available_slot(): void
+    {
+        $doctor = $this->createDoctor('doctor-update-weekday-conflict@example.com', '01111111225');
+        $mondaySlot = $this->createAvailability($doctor, '2026-04-20', '09:00:00', '10:00:00');
+        $tuesdaySlot = $this->createAvailability($doctor, '2026-04-21', '11:00:00', '12:00:00');
+
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $response = $this->putJson('/api/doctor/available-time/' . $tuesdaySlot->id, [
+            'date' => 'monday',
+            'start_time' => '11:00 AM',
+            'end_time' => '12:00 PM',
+        ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonPath('message', 'An available slot already exists for this weekday');
+
+        $this->assertDatabaseHas('doctor_availabilities', [
+            'id' => $mondaySlot->id,
+            'date' => '2026-04-20',
+            'status' => 'available',
+        ]);
+        $this->assertDatabaseHas('doctor_availabilities', [
+            'id' => $tuesdaySlot->id,
+            'date' => '2026-04-21',
+            'status' => 'available',
+        ]);
     }
 
     public function test_doctor_update_available_time_ignores_overlap_with_non_available_slots(): void
@@ -398,21 +427,41 @@ class DoctorAvailabilityCrudTest extends TestCase
         $response->assertJsonPath('message', 'End time must be before start time when ends_next_day is true');
     }
 
-    public function test_save_available_time_rejects_overlapping_slot(): void
+    public function test_save_available_time_with_weekday_text_upserts_existing_available_slot(): void
     {
         $doctor = $this->createDoctor('doctor-create-1@example.com', '01111111199');
-        $this->createAvailability($doctor, '2026-04-20', '09:00:00', '10:00:00');
+        $existingSaturdaySlot = $this->createAvailability($doctor, '2026-04-25', '09:00:00', '10:00:00');
 
         Sanctum::actingAs($doctor, ['doctor']);
 
         $response = $this->putJson('/api/doctor/save-available-time', [
-            'date' => '2026-04-20',
+            'date' => 'saturday',
             'start_time' => '09:30 AM',
             'end_time' => '10:30 AM',
         ]);
 
-        $response->assertStatus(422);
-        $response->assertJsonPath('message', 'This time conflicts with an existing availability');
+        $response->assertStatus(200);
+        $response->assertJsonFragment([
+            'date' => 'saturday',
+            'start_time' => '09:30 AM',
+            'end_time' => '10:30 AM',
+            'status' => 'available',
+        ]);
+
+        $this->assertDatabaseHas('doctor_availabilities', [
+            'id' => $existingSaturdaySlot->id,
+            'date' => 'saturday',
+            'start_time' => '09:30:00',
+            'end_time' => '10:30:00',
+            'status' => 'available',
+        ]);
+        $this->assertSame(
+            1,
+            DoctorAvailability::where('doctors_id', $doctor->id)
+                ->where('status', 'available')
+                ->where('date', 'saturday')
+                ->count()
+        );
     }
 
     public function test_save_available_time_ignores_overlap_with_non_available_slots(): void
@@ -432,7 +481,7 @@ class DoctorAvailabilityCrudTest extends TestCase
         $response->assertStatus(200);
         $this->assertDatabaseHas('doctor_availabilities', [
             'doctors_id' => $doctor->id,
-            'date' => '2026-04-20',
+            'date' => 'monday',
             'start_time' => '09:30:00',
             'end_time' => '10:30:00',
             'status' => 'available',
@@ -454,7 +503,7 @@ class DoctorAvailabilityCrudTest extends TestCase
         $response->assertStatus(200);
         $this->assertDatabaseHas('doctor_availabilities', [
             'doctors_id' => $doctor->id,
-            'date' => '2026-04-20',
+            'date' => 'monday',
             'start_time' => '22:00:00',
             'end_time' => '02:00:00',
             'ends_next_day' => 1,
@@ -633,6 +682,7 @@ class DoctorAvailabilityCrudTest extends TestCase
         foreach ([
             'personal_access_tokens',
             'doctor_availabilities',
+            'doctor_representative_favorite',
             'appointments',
             'representatives',
             'companies',
@@ -702,6 +752,14 @@ class DoctorAvailabilityCrudTest extends TestCase
             $table->string('password');
             $table->enum('status', ['active', 'inactive'])->default('active');
             $table->text('fcm_token')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('doctor_representative_favorite', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('doctors_id');
+            $table->unsignedBigInteger('representative_id');
+            $table->boolean('is_fav')->default(false);
             $table->timestamps();
         });
 
