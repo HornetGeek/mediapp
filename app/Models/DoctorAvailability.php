@@ -14,7 +14,12 @@ class DoctorAvailability extends Model
         'date',
         'start_time',
         'end_time',
+        'ends_next_day',
         'status',
+    ];
+
+    protected $casts = [
+        'ends_next_day' => 'boolean',
     ];
     
     public function doctor()

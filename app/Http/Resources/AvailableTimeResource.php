@@ -20,6 +20,7 @@ class AvailableTimeResource extends JsonResource
             'date' => $this->date,
             'start_time' => Carbon::parse($this->start_time)->format('h:i A'), // 12h format
             'end_time' => Carbon::parse($this->end_time)->format('h:i A'),
+            'ends_next_day' => (bool) $this->ends_next_day,
             'status' => $this->status,
         ];
     }

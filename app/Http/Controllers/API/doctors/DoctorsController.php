@@ -75,7 +75,7 @@ class DoctorsController extends Controller
         $doctor->load(
             [
                 'availableTimes' => function ($query) {
-                    $query->select('id', 'doctors_id', 'date', 'start_time', 'end_time', 'status');
+                    $query->select('id', 'doctors_id', 'date', 'start_time', 'end_time', 'ends_next_day', 'status');
                 }
             ]
         );
@@ -172,6 +172,7 @@ class DoctorsController extends Controller
             'date' => ['required', 'date_format:Y-m-d'],
             'start_time' => ['required', 'string'],
             'end_time' => ['required', 'string'],
+            'ends_next_day' => ['nullable', 'boolean'],
             'status' => ['nullable', 'string'],
         ]);
 
@@ -184,7 +185,8 @@ class DoctorsController extends Controller
             return ApiResponse::sendResponse(422, $normalizedDate['error'], []);
         }
 
-        $normalizedTimes = $this->normalizeAvailabilityTimes($validated['start_time'], $validated['end_time']);
+        $endsNextDay = (bool) ($validated['ends_next_day'] ?? false);
+        $normalizedTimes = $this->normalizeAvailabilityTimes($validated['start_time'], $validated['end_time'], $endsNextDay);
         if (isset($normalizedTimes['error'])) {
             return ApiResponse::sendResponse(422, $normalizedTimes['error'], []);
         }
@@ -193,7 +195,8 @@ class DoctorsController extends Controller
             (int) $doctor->id,
             $normalizedDate['date'],
             $normalizedTimes['start_time'],
-            $normalizedTimes['end_time']
+            $normalizedTimes['end_time'],
+            $normalizedTimes['ends_next_day']
         )) {
             return ApiResponse::sendResponse(422, 'This time conflicts with an existing availability', []);
         }
@@ -202,6 +205,7 @@ class DoctorsController extends Controller
             'date' => $normalizedDate['date'],
             'start_time' => $normalizedTimes['start_time'],
             'end_time' => $normalizedTimes['end_time'],
+            'ends_next_day' => $normalizedTimes['ends_next_day'],
             'status' => $validated['status'] ?? 'available',
         ]);
         return ApiResponse::sendResponse(200, 'Availabilities saved successfully', DoctorResource::make($doctor->load('availableTimes')));
@@ -215,6 +219,7 @@ class DoctorsController extends Controller
             'date' => ['required', 'date_format:Y-m-d'],
             'start_time' => ['required', 'string'],
             'end_time' => ['required', 'string'],
+            'ends_next_day' => ['nullable', 'boolean'],
         ]);
 
         if ($validator->fails()) {
@@ -236,20 +241,23 @@ class DoctorsController extends Controller
             return ApiResponse::sendResponse(422, $normalizedDate['error'], []);
         }
 
-        $normalizedTimes = $this->normalizeAvailabilityTimes($validated['start_time'], $validated['end_time']);
+        $endsNextDay = (bool) ($validated['ends_next_day'] ?? false);
+        $normalizedTimes = $this->normalizeAvailabilityTimes($validated['start_time'], $validated['end_time'], $endsNextDay);
         if (isset($normalizedTimes['error'])) {
             return ApiResponse::sendResponse(422, $normalizedTimes['error'], []);
         }
 
         $isNoOpUpdate = $availability->date === $normalizedDate['date']
             && $availability->start_time === $normalizedTimes['start_time']
-            && $availability->end_time === $normalizedTimes['end_time'];
+            && $availability->end_time === $normalizedTimes['end_time']
+            && (bool) $availability->ends_next_day === $normalizedTimes['ends_next_day'];
 
         if ($this->hasAvailabilityOverlap(
             (int) $doctor->id,
             $normalizedDate['date'],
             $normalizedTimes['start_time'],
             $normalizedTimes['end_time'],
+            $normalizedTimes['ends_next_day'],
             (int) $availability->id
         )) {
             return ApiResponse::sendResponse(422, 'This time conflicts with an existing availability', []);
@@ -259,7 +267,8 @@ class DoctorsController extends Controller
             (int) $doctor->id,
             $normalizedDate['date'],
             $normalizedTimes['start_time'],
-            $normalizedTimes['end_time']
+            $normalizedTimes['end_time'],
+            $normalizedTimes['ends_next_day']
         )) {
             return ApiResponse::sendResponse(422, 'Cannot update availability that overlaps active appointments', []);
         }
@@ -268,6 +277,7 @@ class DoctorsController extends Controller
             'date' => $normalizedDate['date'],
             'start_time' => $normalizedTimes['start_time'],
             'end_time' => $normalizedTimes['end_time'],
+            'ends_next_day' => $normalizedTimes['ends_next_day'],
         ]);
 
         return ApiResponse::sendResponse(200, 'Availability updated successfully', new AvailableTimeResource($availability->fresh()));
@@ -290,7 +300,8 @@ class DoctorsController extends Controller
             (int) $doctor->id,
             $availability->date,
             $availability->start_time,
-            $availability->end_time
+            $availability->end_time,
+            (bool) $availability->ends_next_day
         )) {
             return ApiResponse::sendResponse(422, 'Cannot delete availability that overlaps active appointments', []);
         }
@@ -786,7 +797,7 @@ class DoctorsController extends Controller
         return ApiResponse::sendResponse(200, 'Blocked users fetched successfully', BlockSearchResource::collection($blocked));
     }
 
-    private function normalizeAvailabilityTimes(string $startTime, string $endTime): array
+    private function normalizeAvailabilityTimes(string $startTime, string $endTime, bool $endsNextDay): array
     {
         $normalizedStartTime = $this->normalizeAvailabilityTime($startTime);
         $normalizedEndTime = $this->normalizeAvailabilityTime($endTime);
@@ -795,13 +806,18 @@ class DoctorsController extends Controller
             return ['error' => 'Invalid time format, please use hh:mm AM/PM or HH:mm'];
         }
 
-        if ($normalizedStartTime >= $normalizedEndTime) {
+        if (!$endsNextDay && $normalizedStartTime >= $normalizedEndTime) {
             return ['error' => 'Start time must be before end time'];
+        }
+
+        if ($endsNextDay && $normalizedEndTime >= $normalizedStartTime) {
+            return ['error' => 'End time must be before start time when ends_next_day is true'];
         }
 
         return [
             'start_time' => $normalizedStartTime,
             'end_time' => $normalizedEndTime,
+            'ends_next_day' => $endsNextDay,
         ];
     }
 
@@ -856,33 +872,114 @@ class DoctorsController extends Controller
         string $date,
         string $startTime,
         string $endTime,
+        bool $endsNextDay,
         ?int $ignoredAvailabilityId = null
     ): bool {
-        return DoctorAvailability::query()
+        $targetInterval = $this->buildInterval($date, $startTime, $endTime, $endsNextDay);
+        $windowStart = $targetInterval['start_at']->copy()->subDay()->toDateString();
+        $windowEnd = $targetInterval['end_at']->toDateString();
+
+        $candidateAvailabilities = DoctorAvailability::query()
             ->where('doctors_id', $doctorId)
-            ->where('date', $date)
             ->where('status', 'available')
+            ->where('date', '>=', $windowStart)
+            ->where('date', '<=', $windowEnd)
             ->when($ignoredAvailabilityId !== null, function ($query) use ($ignoredAvailabilityId) {
                 $query->where('id', '!=', $ignoredAvailabilityId);
             })
-            ->whereTime('start_time', '<', $endTime)
-            ->whereTime('end_time', '>', $startTime)
-            ->exists();
+            ->get(['id', 'date', 'start_time', 'end_time', 'ends_next_day']);
+
+        foreach ($candidateAvailabilities as $availability) {
+            $existingEndsNextDay = (bool) $availability->ends_next_day
+                || $this->isLegacyOvernightInterval((string) $availability->start_time, (string) $availability->end_time);
+
+            $existingInterval = $this->buildInterval(
+                (string) $availability->date,
+                (string) $availability->start_time,
+                (string) $availability->end_time,
+                $existingEndsNextDay
+            );
+
+            if ($this->intervalsOverlap(
+                $targetInterval['start_at'],
+                $targetInterval['end_at'],
+                $existingInterval['start_at'],
+                $existingInterval['end_at']
+            )) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function hasActiveAppointmentOverlap(
         int $doctorId,
         string $date,
         string $startTime,
-        string $endTime
+        string $endTime,
+        bool $endsNextDay
     ): bool {
-        return Appointment::query()
+        $targetInterval = $this->buildInterval($date, $startTime, $endTime, $endsNextDay);
+        $windowStart = $targetInterval['start_at']->copy()->subDay()->toDateString();
+        $windowEnd = $targetInterval['end_at']->toDateString();
+
+        $candidateAppointments = Appointment::query()
             ->where('doctors_id', $doctorId)
-            ->whereDate('date', $date)
             ->whereIn('status', ['pending', 'confirmed'])
-            ->whereTime('start_time', '<', $endTime)
-            ->whereTime('end_time', '>', $startTime)
-            ->exists();
+            ->whereDate('date', '>=', $windowStart)
+            ->whereDate('date', '<=', $windowEnd)
+            ->get(['id', 'date', 'start_time', 'end_time']);
+
+        foreach ($candidateAppointments as $appointment) {
+            $appointmentEndsNextDay = $this->isLegacyOvernightInterval(
+                (string) $appointment->start_time,
+                (string) $appointment->end_time
+            );
+
+            $appointmentInterval = $this->buildInterval(
+                Carbon::parse($appointment->date)->toDateString(),
+                Carbon::parse($appointment->start_time)->format('H:i:s'),
+                Carbon::parse($appointment->end_time)->format('H:i:s'),
+                $appointmentEndsNextDay
+            );
+
+            if ($this->intervalsOverlap(
+                $targetInterval['start_at'],
+                $targetInterval['end_at'],
+                $appointmentInterval['start_at'],
+                $appointmentInterval['end_at']
+            )) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function buildInterval(string $date, string $startTime, string $endTime, bool $endsNextDay): array
+    {
+        $startAt = Carbon::parse($date . ' ' . $startTime);
+        $endAt = Carbon::parse($date . ' ' . $endTime);
+
+        if ($endsNextDay) {
+            $endAt->addDay();
+        }
+
+        return [
+            'start_at' => $startAt,
+            'end_at' => $endAt,
+        ];
+    }
+
+    private function intervalsOverlap(Carbon $leftStartAt, Carbon $leftEndAt, Carbon $rightStartAt, Carbon $rightEndAt): bool
+    {
+        return $leftStartAt->lt($rightEndAt) && $leftEndAt->gt($rightStartAt);
+    }
+
+    private function isLegacyOvernightInterval(string $startTime, string $endTime): bool
+    {
+        return $endTime <= $startTime;
     }
 
     private function refreshDoctorAppointments(AppointmentStatusRefreshService $statusRefresh): int
