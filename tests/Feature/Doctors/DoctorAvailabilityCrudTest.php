@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Doctors;
 
+use App\Http\Resources\ListDoctorsResource;
 use App\Models\Appointment;
 use App\Models\Company;
 use App\Models\DoctorAvailability;
@@ -40,7 +41,7 @@ class DoctorAvailabilityCrudTest extends TestCase
         $response->assertStatus(200);
         $response->assertJsonCount(1, 'data.available_times');
         $response->assertJsonFragment([
-            'date' => 'saturday',
+            'date' => 'Saturday',
             'start_time' => '09:00 AM',
             'end_time' => '10:00 AM',
             'status' => 'available',
@@ -134,6 +135,7 @@ class DoctorAvailabilityCrudTest extends TestCase
         $response->assertStatus(200);
         $response->assertJsonCount(1, 'data.available_times');
         $response->assertJsonPath('data.available_times.0.status', 'available');
+        $response->assertJsonPath('data.available_times.0.date', 'Monday');
     }
 
     public function test_representative_doctor_listing_endpoints_return_only_available_times(): void
@@ -155,6 +157,7 @@ class DoctorAvailabilityCrudTest extends TestCase
         $this->assertNotNull($doctorPayload);
         $this->assertCount(1, $doctorPayload['available_times']);
         $this->assertSame('available', $doctorPayload['available_times'][0]['status']);
+        $this->assertSame('Monday', $doctorPayload['available_times'][0]['date']);
 
         $searchResponse = $this->getJson('/api/reps/doctors/search?name=Visible');
         $searchResponse->assertStatus(200);
@@ -163,6 +166,7 @@ class DoctorAvailabilityCrudTest extends TestCase
         $this->assertNotNull($searchPayload);
         $this->assertCount(1, $searchPayload['available_times']);
         $this->assertSame('available', $searchPayload['available_times'][0]['status']);
+        $this->assertSame('Monday', $searchPayload['available_times'][0]['date']);
 
         $bySpecialityResponse = $this->getJson('/api/reps/doctorsBySpeciality?specialty_id=' . $doctor->specialty_id);
         $bySpecialityResponse->assertStatus(200);
@@ -171,6 +175,7 @@ class DoctorAvailabilityCrudTest extends TestCase
         $this->assertNotNull($specialityPayload);
         $this->assertCount(1, $specialityPayload['available_times']);
         $this->assertSame('available', $specialityPayload['available_times'][0]['status']);
+        $this->assertSame('Monday', $specialityPayload['available_times'][0]['date']);
     }
 
     public function test_representative_favorite_doctor_endpoints_return_only_available_times(): void
@@ -193,6 +198,7 @@ class DoctorAvailabilityCrudTest extends TestCase
         $this->assertNotNull($listPayload);
         $this->assertCount(1, $listPayload['available_times']);
         $this->assertSame('available', $listPayload['available_times'][0]['status']);
+        $this->assertSame('Monday', $listPayload['available_times'][0]['date']);
 
         $searchResponse = $this->getJson('/api/reps/search/favorite-doctors?search=Favorite');
         $searchResponse->assertStatus(200);
@@ -201,6 +207,7 @@ class DoctorAvailabilityCrudTest extends TestCase
         $this->assertNotNull($searchPayload);
         $this->assertCount(1, $searchPayload['available_times']);
         $this->assertSame('available', $searchPayload['available_times'][0]['status']);
+        $this->assertSame('Monday', $searchPayload['available_times'][0]['date']);
     }
 
     public function test_doctor_resource_based_edit_endpoints_return_only_available_times(): void
@@ -219,6 +226,7 @@ class DoctorAvailabilityCrudTest extends TestCase
         $editProfileResponse->assertStatus(200);
         $editProfileResponse->assertJsonCount(1, 'data.available_times');
         $editProfileResponse->assertJsonPath('data.available_times.0.status', 'available');
+        $editProfileResponse->assertJsonPath('data.available_times.0.date', 'Monday');
 
         $editStatusResponse = $this->putJson('/api/doctor/edit-status', [
             'status' => 'active',
@@ -226,6 +234,7 @@ class DoctorAvailabilityCrudTest extends TestCase
         $editStatusResponse->assertStatus(200);
         $editStatusResponse->assertJsonCount(1, 'data.available_times');
         $editStatusResponse->assertJsonPath('data.available_times.0.status', 'available');
+        $editStatusResponse->assertJsonPath('data.available_times.0.date', 'Monday');
     }
 
     public function test_doctor_can_update_own_available_time(): void
@@ -243,7 +252,7 @@ class DoctorAvailabilityCrudTest extends TestCase
 
         $response->assertStatus(200);
         $response->assertJsonPath('data.id', $availability->id);
-        $response->assertJsonPath('data.date', 'monday');
+        $response->assertJsonPath('data.date', 'Monday');
         $response->assertJsonPath('data.start_time', '11:00 AM');
         $response->assertJsonPath('data.end_time', '12:00 PM');
 
@@ -652,7 +661,7 @@ class DoctorAvailabilityCrudTest extends TestCase
 
         $response->assertStatus(200);
         $response->assertJsonFragment([
-            'date' => 'saturday',
+            'date' => 'Saturday',
             'start_time' => '09:30 AM',
             'end_time' => '10:30 AM',
             'status' => 'available',
@@ -750,7 +759,7 @@ class DoctorAvailabilityCrudTest extends TestCase
 
         $response->assertStatus(200);
         $response->assertJsonFragment([
-            'date' => 'monday',
+            'date' => 'Monday',
             'start_time' => '10:00 AM',
             'end_time' => '12:00 PM',
             'ends_next_day' => false,
@@ -845,6 +854,17 @@ class DoctorAvailabilityCrudTest extends TestCase
 
         $equalTimesResponse->assertStatus(422);
         $equalTimesResponse->assertJsonPath('message', 'Start time must be before end time');
+    }
+
+    public function test_super_admin_list_doctors_resource_keeps_lowercase_weekday_date(): void
+    {
+        $doctor = $this->createDoctor('super-admin-lowercase-date@example.com', '01111111239');
+        $this->createAvailability($doctor, 'saturday', '09:00:00', '10:00:00', 'available');
+
+        $resource = new ListDoctorsResource($doctor->load(['specialty', 'availableTimes']));
+        $payload = $resource->resolve();
+
+        $this->assertSame('saturday', $payload['available_times'][0]['date']);
     }
 
     private function createDoctor(string $email, string $phone): Doctors
