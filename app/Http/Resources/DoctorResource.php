@@ -16,6 +16,14 @@ class DoctorResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
+        $availableTimes = $this->relationLoaded('availableTimes')
+            ? $this->availableTimes
+            : $this->availableTimes()->where('status', 'available')->get();
+
+        $availableTimes = $availableTimes
+            ->where('status', 'available')
+            ->values();
+
         return [
             'id' => $this->id,
             'name' => $this->name,
@@ -23,7 +31,7 @@ class DoctorResource extends JsonResource
             'phone' => $this->phone,
             'specialty' => $this->specialty->name ?? 'N/A',
             'address_1' => $this->address_1,
-            'available_times' => AvailableTimeResource::collection($this->availableTimes),
+            'available_times' => AvailableTimeResource::collection($availableTimes),
             'times_booked' => Appointment::where('doctors_id', $this->id)
                 ->where('status', 'pending')
                 ->orderBy('date')

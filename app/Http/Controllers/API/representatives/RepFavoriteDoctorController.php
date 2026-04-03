@@ -53,11 +53,19 @@ class RepFavoriteDoctorController extends Controller
     public function list()
     {
         $rep = auth()->user();
+        $favoriteDoctors = $rep->favoriteDoctors()
+            ->with([
+                'availableTimes' => function ($query) {
+                    $query->where('status', 'available');
+                },
+                'specialty',
+            ])
+            ->get();
 
-        if ($rep->favoriteDoctors->isEmpty()) {
+        if ($favoriteDoctors->isEmpty()) {
             return ApiResponse::sendResponse(200, 'No favorite doctors found', []);
         }
-        return ApiResponse::sendResponse(200, 'Favorite doctors retrieved successfully', DoctorResource::collection($rep->favoriteDoctors));
+        return ApiResponse::sendResponse(200, 'Favorite doctors retrieved successfully', DoctorResource::collection($favoriteDoctors));
     }
 
     public function searchFavoriteDoctors(Request $request)
@@ -68,7 +76,15 @@ class RepFavoriteDoctorController extends Controller
 
         $rep = auth()->user();
 
-        $favoriteDoctors = $rep->favoriteDoctors()->favoriteFilter($request->search)->get();
+        $favoriteDoctors = $rep->favoriteDoctors()
+            ->favoriteFilter($request->search)
+            ->with([
+                'availableTimes' => function ($query) {
+                    $query->where('status', 'available');
+                },
+                'specialty',
+            ])
+            ->get();
 
         if ($favoriteDoctors->isEmpty()) {
             return ApiResponse::sendResponse(200, 'No favorite doctors found matching the search criteria', []);
