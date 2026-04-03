@@ -143,6 +143,141 @@ class DoctorAppointmentsPhoneTest extends TestCase
         $response->assertJsonPath('data.1.status', 'confirmed');
     }
 
+    public function test_doctor_appointments_endpoint_supports_search_by_representative_company_and_appointment_code(): void
+    {
+        [$doctor] = $this->seedDoctorAppointmentData('pending');
+        $primaryAppointment = Appointment::firstOrFail();
+
+        $package = Package::firstOrFail();
+        $searchCompany = Company::create([
+            'name' => 'Search Company',
+            'package_id' => $package->id,
+            'phone' => '01222222223',
+            'email' => 'search-company@example.com',
+            'password' => 'secret123',
+            'status' => 'active',
+        ]);
+
+        $searchRepresentative = Representative::create([
+            'name' => 'Different Counterparty',
+            'email' => 'search-rep@example.com',
+            'phone' => '01033333335',
+            'password' => 'secret123',
+            'company_id' => $searchCompany->id,
+            'status' => 'active',
+        ]);
+
+        $searchCompanyAppointment = Appointment::create([
+            'doctors_id' => $doctor->id,
+            'representative_id' => $searchRepresentative->id,
+            'company_id' => $searchCompany->id,
+            'date' => Carbon::now('Africa/Cairo')->addDays(2)->toDateString(),
+            'start_time' => '11:00:00',
+            'end_time' => '11:05:00',
+            'status' => 'pending',
+        ]);
+
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $searchByRepresentative = $this->getJson('/api/doctor/doctor/appointments?search=Rep%20A');
+        $searchByRepresentative->assertStatus(200);
+        $this->assertSame(
+            [$primaryAppointment->id],
+            collect($searchByRepresentative->json('data'))->pluck('id')->values()->all()
+        );
+
+        $searchByCompany = $this->getJson('/api/doctor/doctor/appointments?search=Search%20Company');
+        $searchByCompany->assertStatus(200);
+        $this->assertSame(
+            [$searchCompanyAppointment->id],
+            collect($searchByCompany->json('data'))->pluck('id')->values()->all()
+        );
+
+        $searchByAppointmentCode = $this->getJson('/api/doctor/doctor/appointments?search=' . $primaryAppointment->appointment_code);
+        $searchByAppointmentCode->assertStatus(200);
+        $this->assertSame(
+            [$primaryAppointment->id],
+            collect($searchByAppointmentCode->json('data'))->pluck('id')->values()->all()
+        );
+    }
+
+    public function test_doctor_appointments_endpoint_combines_status_search_and_pagination(): void
+    {
+        [$doctor] = $this->seedDoctorAppointmentData('pending');
+        $package = Package::firstOrFail();
+
+        $matchedCompany = Company::create([
+            'name' => 'Matched Company',
+            'package_id' => $package->id,
+            'phone' => '01222222224',
+            'email' => 'matched-company@example.com',
+            'password' => 'secret123',
+            'status' => 'active',
+        ]);
+
+        $matchedRep = Representative::create([
+            'name' => 'Matched Rep',
+            'email' => 'matched-rep@example.com',
+            'phone' => '01033333336',
+            'password' => 'secret123',
+            'company_id' => $matchedCompany->id,
+            'status' => 'active',
+        ]);
+
+        foreach ([1, 2, 3] as $offset) {
+            Appointment::create([
+                'doctors_id' => $doctor->id,
+                'representative_id' => $matchedRep->id,
+                'company_id' => $matchedCompany->id,
+                'date' => Carbon::now('Africa/Cairo')->addDays(3)->toDateString(),
+                'start_time' => sprintf('16:0%d:00', $offset),
+                'end_time' => sprintf('16:0%d:00', $offset + 1),
+                'status' => 'confirmed',
+            ]);
+        }
+
+        $otherCompany = Company::create([
+            'name' => 'Other Company',
+            'package_id' => $package->id,
+            'phone' => '01222222225',
+            'email' => 'other-company@example.com',
+            'password' => 'secret123',
+            'status' => 'active',
+        ]);
+
+        $otherRep = Representative::create([
+            'name' => 'Other Rep',
+            'email' => 'other-rep@example.com',
+            'phone' => '01033333337',
+            'password' => 'secret123',
+            'company_id' => $otherCompany->id,
+            'status' => 'active',
+        ]);
+
+        Appointment::create([
+            'doctors_id' => $doctor->id,
+            'representative_id' => $otherRep->id,
+            'company_id' => $otherCompany->id,
+            'date' => Carbon::now('Africa/Cairo')->addDays(3)->toDateString(),
+            'start_time' => '17:00:00',
+            'end_time' => '17:05:00',
+            'status' => 'confirmed',
+        ]);
+
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $response = $this->getJson('/api/doctor/doctor/appointments?status=confirmed&search=Matched&per_page=2&page=2');
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('pagination.current_page', 2);
+        $response->assertJsonPath('pagination.per_page', 2);
+        $response->assertJsonPath('pagination.total', 3);
+        $response->assertJsonPath('pagination.last_page', 2);
+        $response->assertJsonCount(1, 'data');
+        $response->assertJsonPath('data.0.status', 'confirmed');
+        $response->assertJsonPath('data.0.representative.name', 'Matched Rep');
+    }
+
     public function test_doctor_appointments_endpoint_returns_not_found_with_pagination_when_filter_is_empty(): void
     {
         [$doctor] = $this->seedDoctorAppointmentData('pending');
@@ -315,6 +450,111 @@ class DoctorAppointmentsPhoneTest extends TestCase
         $response->assertJsonPath('data.1.status', 'confirmed');
     }
 
+    public function test_reps_booked_appointments_endpoint_supports_search_by_doctor_company_and_appointment_code(): void
+    {
+        [$doctor, $rep] = $this->seedDoctorAppointmentData('pending');
+        $firstAppointment = Appointment::firstOrFail();
+        $specialty = Specialty::firstOrFail();
+
+        $searchDoctor = Doctors::create([
+            'name' => 'Doctor Search Target',
+            'email' => 'doctor-search-target@example.com',
+            'phone' => '01111111113',
+            'password' => 'secret123',
+            'specialty_id' => $specialty->id,
+            'status' => 'active',
+        ]);
+
+        $doctorAppointment = Appointment::create([
+            'doctors_id' => $searchDoctor->id,
+            'representative_id' => $rep->id,
+            'company_id' => $rep->company_id,
+            'date' => Carbon::now('Africa/Cairo')->addDays(2)->toDateString(),
+            'start_time' => '11:00:00',
+            'end_time' => '11:05:00',
+            'status' => 'pending',
+        ]);
+
+        Sanctum::actingAs($rep, ['representative']);
+
+        $searchByDoctor = $this->getJson('/api/reps/booked/appointments?search=Search%20Target');
+        $searchByDoctor->assertStatus(200);
+        $this->assertSame(
+            [$doctorAppointment->id],
+            collect($searchByDoctor->json('data'))->pluck('id')->values()->all()
+        );
+
+        $searchByCompany = $this->getJson('/api/reps/booked/appointments?search=Company%20A');
+        $searchByCompany->assertStatus(200);
+        $searchByCompany->assertJsonPath('pagination.total', 2);
+
+        $searchByAppointmentCode = $this->getJson('/api/reps/booked/appointments?search=' . $firstAppointment->appointment_code);
+        $searchByAppointmentCode->assertStatus(200);
+        $this->assertSame(
+            [$firstAppointment->id],
+            collect($searchByAppointmentCode->json('data'))->pluck('id')->values()->all()
+        );
+    }
+
+    public function test_reps_booked_appointments_endpoint_combines_status_search_and_pagination(): void
+    {
+        [$doctor, $rep] = $this->seedDoctorAppointmentData('pending');
+        $specialty = Specialty::findOrFail($doctor->specialty_id);
+
+        foreach ([1, 2, 3] as $offset) {
+            $matchedDoctor = Doctors::create([
+                'name' => 'Matched Doctor ' . $offset,
+                'email' => 'matched-doctor-' . $offset . '@example.com',
+                'phone' => '0111111112' . $offset,
+                'password' => 'secret123',
+                'specialty_id' => $specialty->id,
+                'status' => 'active',
+            ]);
+
+            Appointment::create([
+                'doctors_id' => $matchedDoctor->id,
+                'representative_id' => $rep->id,
+                'company_id' => $rep->company_id,
+                'date' => Carbon::now('Africa/Cairo')->addDays(3)->toDateString(),
+                'start_time' => sprintf('18:0%d:00', $offset),
+                'end_time' => sprintf('18:0%d:00', $offset + 1),
+                'status' => 'confirmed',
+            ]);
+        }
+
+        $otherDoctor = Doctors::create([
+            'name' => 'Other Doctor',
+            'email' => 'other-doctor@example.com',
+            'phone' => '01111111127',
+            'password' => 'secret123',
+            'specialty_id' => $specialty->id,
+            'status' => 'active',
+        ]);
+
+        Appointment::create([
+            'doctors_id' => $otherDoctor->id,
+            'representative_id' => $rep->id,
+            'company_id' => $rep->company_id,
+            'date' => Carbon::now('Africa/Cairo')->addDays(3)->toDateString(),
+            'start_time' => '19:00:00',
+            'end_time' => '19:05:00',
+            'status' => 'confirmed',
+        ]);
+
+        Sanctum::actingAs($rep, ['representative']);
+
+        $response = $this->getJson('/api/reps/booked/appointments?status=confirmed&search=Matched&per_page=2&page=2');
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('pagination.current_page', 2);
+        $response->assertJsonPath('pagination.per_page', 2);
+        $response->assertJsonPath('pagination.total', 3);
+        $response->assertJsonPath('pagination.last_page', 2);
+        $response->assertJsonCount(1, 'data');
+        $response->assertJsonPath('data.0.status', 'confirmed');
+        $response->assertStringContainsString('Matched Doctor', (string) data_get($response->json('data.0'), 'doctor.name'));
+    }
+
     public function test_reps_booked_appointments_endpoint_returns_not_found_with_pagination_when_filter_is_empty(): void
     {
         [, $rep] = $this->seedDoctorAppointmentData('pending');
@@ -327,6 +567,42 @@ class DoctorAppointmentsPhoneTest extends TestCase
         $response->assertJsonPath('pagination.total', 0);
         $response->assertJsonPath('pagination.current_page', 1);
         $response->assertJsonCount(0, 'data');
+    }
+
+    public function test_appointments_search_without_matches_returns_not_found_with_pagination(): void
+    {
+        [$doctor, $rep] = $this->seedDoctorAppointmentData('pending');
+
+        Sanctum::actingAs($doctor, ['doctor']);
+        $doctorResponse = $this->getJson('/api/doctor/doctor/appointments?search=missing-term');
+        $doctorResponse->assertStatus(200);
+        $doctorResponse->assertJsonPath('message', 'Appointments Not Found');
+        $doctorResponse->assertJsonPath('pagination.total', 0);
+        $doctorResponse->assertJsonPath('pagination.current_page', 1);
+        $doctorResponse->assertJsonCount(0, 'data');
+
+        Sanctum::actingAs($rep, ['representative']);
+        $repResponse = $this->getJson('/api/reps/booked/appointments?search=missing-term');
+        $repResponse->assertStatus(200);
+        $repResponse->assertJsonPath('message', 'Appointments Not Found');
+        $repResponse->assertJsonPath('pagination.total', 0);
+        $repResponse->assertJsonPath('pagination.current_page', 1);
+        $repResponse->assertJsonCount(0, 'data');
+    }
+
+    public function test_appointments_endpoints_reject_invalid_search_type(): void
+    {
+        [$doctor, $rep] = $this->seedDoctorAppointmentData('pending');
+
+        Sanctum::actingAs($doctor, ['doctor']);
+        $doctorResponse = $this->getJson('/api/doctor/doctor/appointments?search[]=invalid');
+        $doctorResponse->assertStatus(422);
+        $doctorResponse->assertJsonPath('code', 422);
+
+        Sanctum::actingAs($rep, ['representative']);
+        $repResponse = $this->getJson('/api/reps/booked/appointments?search[]=invalid');
+        $repResponse->assertStatus(422);
+        $repResponse->assertJsonPath('code', 422);
     }
 
     public function test_doctor_appointments_refreshes_suspended_to_left_without_cron(): void
