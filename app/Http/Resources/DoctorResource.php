@@ -31,7 +31,7 @@ class DoctorResource extends JsonResource
             'phone' => $this->phone,
             'specialty' => $this->specialty->name ?? 'N/A',
             'address_1' => $this->address_1,
-            'available_times' => AvailableTimeResource::collection($availableTimes),
+            'available_times' => AppAvailableTimeResource::collection($availableTimes),
             'times_booked' => Appointment::where('doctors_id', $this->id)
                 ->where('status', 'pending')
                 ->orderBy('date')

@@ -5,7 +5,7 @@ namespace App\Http\Controllers\API\doctors;
 use App\Events\SendNotificationEvent;
 use App\Helpers\ApiResponse;
 use App\Http\Controllers\Controller;
-use App\Http\Resources\AvailableTimeResource;
+use App\Http\Resources\AppAvailableTimeResource;
 use App\Http\Resources\BlockedCompanyResource;
 use App\Http\Resources\BlockedRepsResource;
 use App\Http\Resources\BlockSearchResource;
@@ -313,7 +313,7 @@ class DoctorsController extends Controller
             'ends_next_day' => $normalizedTimes['ends_next_day'],
         ]);
 
-        return ApiResponse::sendResponse(200, 'Availability updated successfully', new AvailableTimeResource($availability->fresh()));
+        return ApiResponse::sendResponse(200, 'Availability updated successfully', new AppAvailableTimeResource($availability->fresh()));
     }
 
     public function deleteAvailableTime(Request $request, $availability_id)
