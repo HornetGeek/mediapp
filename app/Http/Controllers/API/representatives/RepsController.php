@@ -273,10 +273,12 @@ class RepsController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'status' => ['nullable', 'in:cancelled,confirmed,pending,left,suspended'],
+            'search' => ['nullable', 'string', 'max:255'],
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ], [], [
             'status' => 'Status',
+            'search' => 'Search',
             'page' => 'Page',
             'per_page' => 'Per Page',
         ]);
@@ -292,6 +294,25 @@ class RepsController extends Controller
             ->where('representative_id', $rep)
             ->when($request->filled('status'), function ($query) use ($request) {
                 $query->where('status', $request->status);
+            })
+            ->when($request->filled('search'), function ($query) use ($request) {
+                $search = trim((string) $request->input('search'));
+
+                if ($search === '') {
+                    return;
+                }
+
+                $searchTerm = '%' . $search . '%';
+
+                $query->where(function ($searchQuery) use ($searchTerm) {
+                    $searchQuery->where('appointment_code', 'like', $searchTerm)
+                        ->orWhereHas('company', function ($companyQuery) use ($searchTerm) {
+                            $companyQuery->where('name', 'like', $searchTerm);
+                        })
+                        ->orWhereHas('doctor', function ($doctorQuery) use ($searchTerm) {
+                            $doctorQuery->where('name', 'like', $searchTerm);
+                        });
+                });
             })
             ->orderBy('date', 'asc')
             ->orderBy('start_time', 'asc')

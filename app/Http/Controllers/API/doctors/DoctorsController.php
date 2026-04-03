@@ -75,7 +75,8 @@ class DoctorsController extends Controller
         $doctor->load(
             [
                 'availableTimes' => function ($query) {
-                    $query->select('id', 'doctors_id', 'date', 'start_time', 'end_time', 'ends_next_day', 'status');
+                    $query->where('status', 'available')
+                        ->select('id', 'doctors_id', 'date', 'start_time', 'end_time', 'ends_next_day', 'status');
                 }
             ]
         );
@@ -173,7 +174,6 @@ class DoctorsController extends Controller
             'start_time' => ['required', 'string'],
             'end_time' => ['required', 'string'],
             'ends_next_day' => ['nullable', 'boolean'],
-            'status' => ['nullable', 'in:available,canceled,booked,busy'],
         ]);
 
         if ($validator->fails()) {
@@ -191,15 +191,10 @@ class DoctorsController extends Controller
             return ApiResponse::sendResponse(422, $normalizedTimes['error'], []);
         }
 
-        $normalizedStatus = $validated['status'] ?? 'available';
-        $existingAvailableWeekdaySlot = null;
-
-        if ($normalizedStatus === 'available') {
-            $existingAvailableWeekdaySlot = $this->findDoctorAvailableWeekdaySlot(
-                (int) $doctor->id,
-                $normalizedDate['date']
-            );
-        }
+        $existingAvailableWeekdaySlot = $this->findDoctorAvailableWeekdaySlot(
+            (int) $doctor->id,
+            $normalizedDate['date']
+        );
 
         if ($this->hasAvailabilityOverlap(
             (int) $doctor->id,
@@ -225,11 +220,15 @@ class DoctorsController extends Controller
                 'start_time' => $normalizedTimes['start_time'],
                 'end_time' => $normalizedTimes['end_time'],
                 'ends_next_day' => $normalizedTimes['ends_next_day'],
-                'status' => $normalizedStatus,
+                'status' => 'available',
             ]);
         }
 
-        return ApiResponse::sendResponse(200, 'Availabilities saved successfully', DoctorResource::make($doctor->load('availableTimes')));
+        return ApiResponse::sendResponse(200, 'Availabilities saved successfully', DoctorResource::make($doctor->load([
+            'availableTimes' => function ($query) {
+                $query->where('status', 'available');
+            }
+        ])));
     }
 
     public function updateAvailableTime(Request $request, $availability_id)
@@ -389,10 +388,12 @@ class DoctorsController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'status' => ['nullable', 'in:cancelled,confirmed,pending,left,suspended'],
+            'search' => ['nullable', 'string', 'max:255'],
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ], [], [
             'status' => 'Status',
+            'search' => 'Search',
             'page' => 'Page',
             'per_page' => 'Per Page',
         ]);
@@ -408,6 +409,25 @@ class DoctorsController extends Controller
             ->where('doctors_id', $doctor)
             ->when($request->filled('status'), function ($query) use ($request) {
                 $query->where('status', $request->status);
+            })
+            ->when($request->filled('search'), function ($query) use ($request) {
+                $search = trim((string) $request->input('search'));
+
+                if ($search === '') {
+                    return;
+                }
+
+                $searchTerm = '%' . $search . '%';
+
+                $query->where(function ($searchQuery) use ($searchTerm) {
+                    $searchQuery->where('appointment_code', 'like', $searchTerm)
+                        ->orWhereHas('company', function ($companyQuery) use ($searchTerm) {
+                            $companyQuery->where('name', 'like', $searchTerm);
+                        })
+                        ->orWhereHas('representative', function ($representativeQuery) use ($searchTerm) {
+                            $representativeQuery->where('name', 'like', $searchTerm);
+                        });
+                });
             })
             ->orderBy('date', 'asc')
             ->orderBy('start_time', 'asc')
@@ -840,12 +860,17 @@ class DoctorsController extends Controller
             return ['error' => 'Invalid time format, please use hh:mm AM/PM or HH:mm'];
         }
 
-        if (!$endsNextDay && $normalizedStartTime >= $normalizedEndTime) {
+        if ($normalizedStartTime === $normalizedEndTime) {
             return ['error' => 'Start time must be before end time'];
         }
 
-        if ($endsNextDay && $normalizedEndTime >= $normalizedStartTime) {
-            return ['error' => 'End time must be before start time when ends_next_day is true'];
+        if (!$endsNextDay && $normalizedStartTime > $normalizedEndTime) {
+            return ['error' => 'Start time must be before end time'];
+        }
+
+        // Allow lenient client behavior: if flag is true but range is same-day, normalize to same-day.
+        if ($endsNextDay && $normalizedEndTime > $normalizedStartTime) {
+            $endsNextDay = false;
         }
 
         return [
