@@ -41,7 +41,12 @@ class RepsController extends Controller
 
     public function getDoctorProfile($doctor_id)
     {
-        $doctor = Doctors::with(['specialty', 'availableTimes'])->find($doctor_id);
+        $doctor = Doctors::with([
+            'specialty',
+            'availableTimes' => function ($query) {
+                $query->where('status', 'available');
+            },
+        ])->find($doctor_id);
 
         if (!$doctor) {
             return ApiResponse::sendResponse(404, 'Doctor not found', []);
@@ -55,7 +60,9 @@ class RepsController extends Controller
         $representative = auth()->user();
         $doctors = Doctors::with([
             'specialty',
-            'availableTimes',
+            'availableTimes' => function ($query) {
+                $query->where('status', 'available');
+            },
             'favoredByReps' => function ($query) {
                 $query->where('representative_id', auth()->id());
             }
@@ -94,7 +101,12 @@ class RepsController extends Controller
         $rep = $request->user();
         $filters = $request->only(['name', 'location', 'specialty_id']);
 
-        $doctors = Doctors::with(['specialty'])
+        $doctors = Doctors::with([
+            'specialty',
+            'availableTimes' => function ($query) {
+                $query->where('status', 'available');
+            },
+        ])
             ->filter($filters)
             ->whereDoesntHave('blocks', function ($q) use ($rep) {
                 $q->where(function ($q2) use ($rep) {
@@ -457,7 +469,12 @@ class RepsController extends Controller
         $representative = auth()->user();
         $speciality_id = $request->input('specialty_id');
 
-        $doctors = Doctors::with('specialty')
+        $doctors = Doctors::with([
+            'specialty',
+            'availableTimes' => function ($query) {
+                $query->where('status', 'available');
+            },
+        ])
             ->when($speciality_id, function ($query, $speciality_id) {
                 $query->where('specialty_id', $speciality_id);
             })
