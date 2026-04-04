@@ -81,7 +81,27 @@ class SendFcmNotificationListener
             return;
         }
 
+        $shouldLogBookedDebug = $this->shouldLogBookedDebug($dedupeKey);
+        $resolvedNotification = null;
+        if ($shouldLogBookedDebug) {
+            $resolvedNotification = Notification::query()
+                ->where('dedupe_fingerprint', $dedupeFingerprint)
+                ->first(['id', 'created_at']);
+        }
+
         if ($inserted === 0) {
+            if ($shouldLogBookedDebug) {
+                \Log::info('Booked notification dedupe debug', [
+                    'notifiable_id' => $event->notifiable->id ?? null,
+                    'notifiable_type' => $notifiableType,
+                    'dedupe_key' => $dedupeKey,
+                    'dedupe_fingerprint' => $dedupeFingerprint,
+                    'inserted' => 0,
+                    'notification_id' => $resolvedNotification?->id,
+                    'created_at' => $resolvedNotification?->created_at?->toDateTimeString(),
+                ]);
+            }
+
             \Log::info('Duplicate notification skipped', [
                 'notifiable_id' => $event->notifiable->id ?? null,
                 'notifiable_type' => $notifiableType,
@@ -89,6 +109,18 @@ class SendFcmNotificationListener
                 'dedupe_fingerprint' => $dedupeFingerprint,
             ]);
             return;
+        }
+
+        if ($shouldLogBookedDebug) {
+            \Log::info('Booked notification dedupe debug', [
+                'notifiable_id' => $event->notifiable->id ?? null,
+                'notifiable_type' => $notifiableType,
+                'dedupe_key' => $dedupeKey,
+                'dedupe_fingerprint' => $dedupeFingerprint,
+                'inserted' => 1,
+                'notification_id' => $resolvedNotification?->id,
+                'created_at' => $resolvedNotification?->created_at?->toDateTimeString(),
+            ]);
         }
 
         if ($event->notifiable->fcm_token) {
@@ -141,5 +173,14 @@ class SendFcmNotificationListener
             (string) $notifiableId,
             $dedupeKey,
         ]));
+    }
+
+    private function shouldLogBookedDebug(string $dedupeKey): bool
+    {
+        if (!config('notifications.debug', false)) {
+            return false;
+        }
+
+        return preg_match('/^appointment:\d+:booked:/', $dedupeKey) === 1;
     }
 }
