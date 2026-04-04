@@ -417,6 +417,47 @@ class DoctorAvailabilityCrudTest extends TestCase
         ]);
     }
 
+    public function test_doctor_update_available_time_with_duplicate_same_weekday_rows_avoids_false_conflict_and_cancels_duplicates(): void
+    {
+        $doctor = $this->createDoctor('doctor-update-duplicate-weekday@example.com', '01111111240');
+        $targetAvailability = $this->createAvailability($doctor, 'thursday', '09:00:00', '10:00:00');
+        $duplicateAvailability = $this->createAvailability($doctor, '2026-04-23', '10:00:00', '11:00:00');
+
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $response = $this->putJson('/api/doctor/available-time/' . $targetAvailability->id, [
+            'date' => 'thursday',
+            'start_time' => '11:30 AM',
+            'end_time' => '12:30 PM',
+        ]);
+
+        $response->assertStatus(200);
+        $response->assertJsonFragment([
+            'date' => 'Thursday',
+            'start_time' => '11:30 AM',
+            'end_time' => '12:30 PM',
+            'status' => 'available',
+        ]);
+
+        $targetAvailability->refresh();
+        $duplicateAvailability->refresh();
+
+        $this->assertSame('available', $targetAvailability->status);
+        $this->assertSame('thursday', $targetAvailability->date);
+        $this->assertSame('11:30:00', $targetAvailability->start_time);
+        $this->assertSame('12:30:00', $targetAvailability->end_time);
+        $this->assertSame('canceled', $duplicateAvailability->status);
+
+        $this->assertSame(
+            1,
+            DoctorAvailability::query()
+                ->where('doctors_id', $doctor->id)
+                ->where('status', 'available')
+                ->where('date', 'thursday')
+                ->count()
+        );
+    }
+
     public function test_doctor_update_available_time_allows_no_op_when_active_appointment_overlaps(): void
     {
         $doctor = $this->createDoctor('doctor-update-no-op@example.com', '01111111212');
@@ -530,6 +571,35 @@ class DoctorAvailabilityCrudTest extends TestCase
 
         $response->assertStatus(200);
         $response->assertJsonPath('data.ends_next_day', true);
+    }
+
+    public function test_doctor_update_available_time_can_move_weekday_without_self_overlap_conflict(): void
+    {
+        $doctor = $this->createDoctor('doctor-update-weekday-self-overlap@example.com', '01111111242');
+        $availability = $this->createAvailability($doctor, 'monday', '22:00:00', '02:00:00', 'available', true);
+
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $response = $this->putJson('/api/doctor/available-time/' . $availability->id, [
+            'date' => 'tuesday',
+            'start_time' => '01:00 AM',
+            'end_time' => '03:00 AM',
+        ]);
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('data.date', 'Tuesday');
+        $response->assertJsonPath('data.start_time', '01:00 AM');
+        $response->assertJsonPath('data.end_time', '03:00 AM');
+        $response->assertJsonPath('data.ends_next_day', false);
+
+        $this->assertDatabaseHas('doctor_availabilities', [
+            'id' => $availability->id,
+            'date' => 'tuesday',
+            'start_time' => '01:00:00',
+            'end_time' => '03:00:00',
+            'ends_next_day' => 0,
+            'status' => 'available',
+        ]);
     }
 
     public function test_doctor_can_delete_own_available_time_when_no_active_appointment_conflict(): void
@@ -679,6 +749,50 @@ class DoctorAvailabilityCrudTest extends TestCase
             DoctorAvailability::where('doctors_id', $doctor->id)
                 ->where('status', 'available')
                 ->where('date', 'saturday')
+                ->count()
+        );
+    }
+
+    public function test_save_available_time_with_duplicate_same_weekday_rows_avoids_false_conflict_and_cancels_duplicates(): void
+    {
+        $doctor = $this->createDoctor('doctor-create-duplicate-weekday@example.com', '01111111241');
+        $legacyThursdaySlot = $this->createAvailability($doctor, '2026-04-23', '08:00:00', '09:00:00');
+        $textThursdaySlot = $this->createAvailability($doctor, 'thursday', '09:00:00', '10:00:00');
+
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $response = $this->putJson('/api/doctor/save-available-time', [
+            'date' => 'thursday',
+            'start_time' => '01:00 PM',
+            'end_time' => '02:00 PM',
+        ]);
+
+        $response->assertStatus(200);
+        $response->assertJsonFragment([
+            'date' => 'Thursday',
+            'start_time' => '01:00 PM',
+            'end_time' => '02:00 PM',
+            'status' => 'available',
+        ]);
+
+        $legacyThursdaySlot->refresh();
+        $textThursdaySlot->refresh();
+
+        $statuses = collect([$legacyThursdaySlot->status, $textThursdaySlot->status]);
+        $this->assertSame(1, $statuses->filter(fn ($status) => $status === 'available')->count());
+        $this->assertSame(1, $statuses->filter(fn ($status) => $status === 'canceled')->count());
+
+        $keeper = collect([$legacyThursdaySlot, $textThursdaySlot])->first(fn ($slot) => $slot->status === 'available');
+        $this->assertNotNull($keeper);
+        $this->assertSame('thursday', $keeper->date);
+        $this->assertSame('13:00:00', $keeper->start_time);
+        $this->assertSame('14:00:00', $keeper->end_time);
+        $this->assertSame(
+            1,
+            DoctorAvailability::query()
+                ->where('doctors_id', $doctor->id)
+                ->where('status', 'available')
+                ->where('date', 'thursday')
                 ->count()
         );
     }

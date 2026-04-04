@@ -191,10 +191,12 @@ class DoctorsController extends Controller
             return ApiResponse::sendResponse(422, $normalizedTimes['error'], []);
         }
 
-        $existingAvailableWeekdaySlot = $this->findDoctorAvailableWeekdaySlot(
+        $sameWeekdayAvailabilities = $this->findDoctorAvailableWeekdayAvailabilities(
             (int) $doctor->id,
             $normalizedDate['date']
         );
+        $existingAvailableWeekdaySlot = $sameWeekdayAvailabilities->first();
+        $ignoredAvailabilityIds = $sameWeekdayAvailabilities->pluck('id')->map(fn ($id) => (int) $id)->all();
 
         if ($this->hasAvailabilityOverlap(
             (int) $doctor->id,
@@ -202,10 +204,12 @@ class DoctorsController extends Controller
             $normalizedTimes['start_time'],
             $normalizedTimes['end_time'],
             $normalizedTimes['ends_next_day'],
-            $existingAvailableWeekdaySlot?->id
+            $ignoredAvailabilityIds
         )) {
             return ApiResponse::sendResponse(422, 'This time conflicts with an existing availability', []);
         }
+
+        $keeperAvailability = null;
 
         if ($existingAvailableWeekdaySlot) {
             $existingAvailableWeekdaySlot->update([
@@ -214,8 +218,9 @@ class DoctorsController extends Controller
                 'end_time' => $normalizedTimes['end_time'],
                 'ends_next_day' => $normalizedTimes['ends_next_day'],
             ]);
+            $keeperAvailability = $existingAvailableWeekdaySlot;
         } else {
-            $doctor->availableTimes()->create([
+            $keeperAvailability = $doctor->availableTimes()->create([
                 'date' => $normalizedDate['date'],
                 'start_time' => $normalizedTimes['start_time'],
                 'end_time' => $normalizedTimes['end_time'],
@@ -223,6 +228,12 @@ class DoctorsController extends Controller
                 'status' => 'available',
             ]);
         }
+
+        $this->cancelDuplicateWeekdayAvailabilities(
+            (int) $doctor->id,
+            $normalizedDate['date'],
+            $keeperAvailability?->id
+        );
 
         return ApiResponse::sendResponse(200, 'Availabilities saved successfully', DoctorResource::make($doctor->load([
             'availableTimes' => function ($query) {
@@ -272,6 +283,18 @@ class DoctorsController extends Controller
             $existingAvailabilityWeekday = strtolower(trim((string) $availability->date));
         }
 
+        $sameWeekdayAvailabilities = $this->findDoctorAvailableWeekdayAvailabilities(
+            (int) $doctor->id,
+            $normalizedDate['date']
+        );
+        $ignoredAvailabilityIds = $sameWeekdayAvailabilities
+            ->pluck('id')
+            ->push((int) $availability->id)
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+
         if ($normalizedDate['date'] !== $existingAvailabilityWeekday && $this->findDoctorAvailableWeekdaySlot(
             (int) $doctor->id,
             $normalizedDate['date'],
@@ -291,7 +314,7 @@ class DoctorsController extends Controller
             $normalizedTimes['start_time'],
             $normalizedTimes['end_time'],
             $normalizedTimes['ends_next_day'],
-            (int) $availability->id
+            $ignoredAvailabilityIds
         )) {
             return ApiResponse::sendResponse(422, 'This time conflicts with an existing availability', []);
         }
@@ -312,6 +335,12 @@ class DoctorsController extends Controller
             'end_time' => $normalizedTimes['end_time'],
             'ends_next_day' => $normalizedTimes['ends_next_day'],
         ]);
+
+        $this->cancelDuplicateWeekdayAvailabilities(
+            (int) $doctor->id,
+            $normalizedDate['date'],
+            (int) $availability->id
+        );
 
         return ApiResponse::sendResponse(200, 'Availability updated successfully', new AppAvailableTimeResource($availability->fresh()));
     }
@@ -925,7 +954,7 @@ class DoctorsController extends Controller
         string $startTime,
         string $endTime,
         bool $endsNextDay,
-        ?int $ignoredAvailabilityId = null
+        array $ignoredAvailabilityIds = []
     ): bool {
         $targetWeekday = $this->normalizeStoredAvailabilityWeekday($date);
         if ($targetWeekday === null) {
@@ -937,8 +966,8 @@ class DoctorsController extends Controller
         $candidateAvailabilities = DoctorAvailability::query()
             ->where('doctors_id', $doctorId)
             ->where('status', 'available')
-            ->when($ignoredAvailabilityId !== null, function ($query) use ($ignoredAvailabilityId) {
-                $query->where('id', '!=', $ignoredAvailabilityId);
+            ->when(!empty($ignoredAvailabilityIds), function ($query) use ($ignoredAvailabilityIds) {
+                $query->whereNotIn('id', $ignoredAvailabilityIds);
             })
             ->get(['id', 'date', 'start_time', 'end_time', 'ends_next_day']);
 
@@ -1066,6 +1095,20 @@ class DoctorsController extends Controller
         string $weekday,
         ?int $ignoredAvailabilityId = null
     ): ?DoctorAvailability {
+        $candidateAvailabilities = $this->findDoctorAvailableWeekdayAvailabilities(
+            $doctorId,
+            $weekday,
+            $ignoredAvailabilityId
+        );
+
+        return $candidateAvailabilities->first();
+    }
+
+    private function findDoctorAvailableWeekdayAvailabilities(
+        int $doctorId,
+        string $weekday,
+        ?int $ignoredAvailabilityId = null
+    ) {
         $candidateAvailabilities = DoctorAvailability::query()
             ->where('doctors_id', $doctorId)
             ->where('status', 'available')
@@ -1074,15 +1117,37 @@ class DoctorsController extends Controller
             })
             ->orderByDesc('updated_at')
             ->orderByDesc('id')
-            ->get(['id', 'date', 'updated_at']);
+            ->get(['id', 'date', 'updated_at', 'status']);
 
-        foreach ($candidateAvailabilities as $availability) {
-            if ($this->normalizeStoredAvailabilityWeekday((string) $availability->date) === $weekday) {
-                return $availability;
-            }
+        return $candidateAvailabilities
+            ->filter(function ($availability) use ($weekday) {
+                return $this->normalizeStoredAvailabilityWeekday((string) $availability->date) === $weekday;
+            })
+            ->values();
+    }
+
+    private function cancelDuplicateWeekdayAvailabilities(int $doctorId, string $weekday, ?int $keeperAvailabilityId): void
+    {
+        $sameWeekdayAvailabilities = $this->findDoctorAvailableWeekdayAvailabilities(
+            $doctorId,
+            $weekday
+        );
+
+        $duplicateAvailabilityIds = $sameWeekdayAvailabilities
+            ->pluck('id')
+            ->filter(function ($id) use ($keeperAvailabilityId) {
+                return $keeperAvailabilityId === null || (int) $id !== (int) $keeperAvailabilityId;
+            })
+            ->values()
+            ->all();
+
+        if (empty($duplicateAvailabilityIds)) {
+            return;
         }
 
-        return null;
+        DoctorAvailability::query()
+            ->whereIn('id', $duplicateAvailabilityIds)
+            ->update(['status' => 'canceled']);
     }
 
     private function normalizeStoredAvailabilityWeekday(string $date): ?string
