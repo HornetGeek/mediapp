@@ -60,6 +60,31 @@ class DoctorAppointmentsPhoneTest extends TestCase
         $response->assertJsonPath('data.0.phone', $rep->phone);
     }
 
+    public function test_doctor_appointments_endpoint_accepts_deleted_status_query_param(): void
+    {
+        [$doctor, $rep] = $this->seedDoctorAppointmentData('pending');
+
+        $deletedAppointment = Appointment::create([
+            'doctors_id' => $doctor->id,
+            'representative_id' => $rep->id,
+            'company_id' => $rep->company_id,
+            'date' => now()->addDay()->toDateString(),
+            'start_time' => '13:00:00',
+            'end_time' => '13:05:00',
+            'status' => 'deleted',
+        ]);
+
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $response = $this->getJson('/api/doctor/doctor/appointments?status=deleted');
+
+        $response->assertStatus(200);
+        $response->assertJsonCount(1, 'data');
+        $response->assertJsonPath('data.0.id', $deletedAppointment->id);
+        $response->assertJsonPath('data.0.status', 'deleted');
+        $response->assertJsonPath('data.0.phone', $rep->phone);
+    }
+
     public function test_doctor_appointments_endpoint_rejects_invalid_status_value(): void
     {
         [$doctor] = $this->seedDoctorAppointmentData('pending');
@@ -378,6 +403,42 @@ class DoctorAppointmentsPhoneTest extends TestCase
         $response->assertJsonPath('data.0.phone', $doctor->phone);
     }
 
+    public function test_reps_booked_appointments_endpoint_accepts_deleted_status_query_param(): void
+    {
+        [$doctor, $rep] = $this->seedDoctorAppointmentData('pending');
+
+        $deletedAppointment = Appointment::create([
+            'doctors_id' => $doctor->id,
+            'representative_id' => $rep->id,
+            'company_id' => $rep->company_id,
+            'date' => Carbon::now('Africa/Cairo')->addDays(2)->toDateString(),
+            'start_time' => '12:00:00',
+            'end_time' => '12:05:00',
+            'status' => 'deleted',
+        ]);
+
+        Sanctum::actingAs($rep, ['representative']);
+
+        $response = $this->getJson('/api/reps/booked/appointments?status=deleted');
+
+        $response->assertStatus(200);
+        $response->assertJsonCount(1, 'data');
+        $response->assertJsonPath('data.0.id', $deletedAppointment->id);
+        $response->assertJsonPath('data.0.status', 'deleted');
+        $response->assertJsonPath('data.0.phone', $doctor->phone);
+    }
+
+    public function test_reps_booked_appointments_endpoint_rejects_invalid_status_value(): void
+    {
+        [, $rep] = $this->seedDoctorAppointmentData('pending');
+        Sanctum::actingAs($rep, ['representative']);
+
+        $response = $this->getJson('/api/reps/booked/appointments?status=invalid_status');
+
+        $response->assertStatus(422);
+        $response->assertJsonPath('code', 422);
+    }
+
     public function test_reps_booked_appointments_endpoint_rejects_invalid_pagination_values(): void
     {
         [, $rep] = $this->seedDoctorAppointmentData('pending');
@@ -661,6 +722,249 @@ class DoctorAppointmentsPhoneTest extends TestCase
         $response->assertJsonPath('data.0.status', 'left');
     }
 
+    public function test_representative_cancel_suspended_appointment_updates_status_to_deleted(): void
+    {
+        [$doctor, $rep] = $this->seedDoctorAppointmentData('pending');
+        $appointment = Appointment::firstOrFail();
+
+        $nowInCairo = Carbon::now('Africa/Cairo')->startOfMinute();
+        $startAt = $nowInCairo->copy()->subMinutes(30);
+        $endAt = $startAt->copy()->addMinutes(5);
+
+        $appointment->update([
+            'date' => $startAt->toDateString(),
+            'start_time' => $startAt->format('H:i:s'),
+            'end_time' => $endAt->format('H:i:s'),
+            'status' => 'suspended',
+            'cancelled_by' => 'system',
+        ]);
+
+        Sanctum::actingAs($rep, ['representative']);
+
+        $response = $this->putJson('/api/reps/cancel-appointment/' . $appointment->id);
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('data.id', $appointment->id);
+        $response->assertJsonPath('data.status', 'deleted');
+        $response->assertJsonPath('data.cancelled_by', 'Reps.' . $rep->name);
+
+        $this->assertDatabaseHas('appointments', [
+            'id' => $appointment->id,
+            'status' => 'deleted',
+            'cancelled_by' => 'Reps.' . $rep->name,
+        ]);
+    }
+
+    public function test_representative_cannot_cancel_left_appointment(): void
+    {
+        [, $rep] = $this->seedDoctorAppointmentData('left');
+        $appointment = Appointment::firstOrFail();
+
+        Sanctum::actingAs($rep, ['representative']);
+
+        $response = $this->putJson('/api/reps/cancel-appointment/' . $appointment->id);
+
+        $response->assertStatus(400);
+        $response->assertJsonPath('message', 'You can\'t cancel appointment in left status');
+    }
+
+    public function test_booking_daily_limit_is_enforced_for_requested_date_not_today(): void
+    {
+        [$doctor, $rep] = $this->seedDoctorAppointmentData('pending');
+        $appointment = Appointment::firstOrFail();
+
+        Company::where('id', $rep->company_id)->update(['visits_per_day' => 1]);
+
+        $today = Carbon::now('Africa/Cairo')->toDateString();
+        $requestedDate = Carbon::now('Africa/Cairo')->addDays(2)->toDateString();
+
+        $appointment->update([
+            'date' => $today,
+            'start_time' => '09:00:00',
+            'end_time' => '09:05:00',
+            'status' => 'confirmed',
+        ]);
+
+        Sanctum::actingAs($rep, ['representative']);
+
+        $response = $this->postJson('/api/reps/booking', [
+            'doctors_id' => $doctor->id,
+            'date' => $requestedDate,
+            'start_time' => '10:00:00',
+        ]);
+
+        $response->assertStatus(201);
+        $this->assertDatabaseHas('appointments', [
+            'representative_id' => $rep->id,
+            'doctors_id' => $doctor->id,
+            'date' => $requestedDate,
+            'start_time' => '10:00:00',
+            'status' => 'pending',
+        ]);
+    }
+
+    public function test_booking_daily_limit_is_scoped_to_the_same_representative_only(): void
+    {
+        [$doctor, $repA] = $this->seedDoctorAppointmentData('pending');
+        $appointment = Appointment::firstOrFail();
+        $company = Company::findOrFail($repA->company_id);
+        $company->update(['visits_per_day' => 1]);
+
+        $repB = Representative::create([
+            'name' => 'Rep B',
+            'email' => 'rep-b-limit@example.com',
+            'phone' => '01033333338',
+            'password' => 'secret123',
+            'company_id' => $company->id,
+            'status' => 'active',
+        ]);
+
+        $requestedDate = Carbon::now('Africa/Cairo')->addDays(2)->toDateString();
+        $appointment->update([
+            'representative_id' => $repA->id,
+            'date' => $requestedDate,
+            'start_time' => '09:00:00',
+            'end_time' => '09:05:00',
+            'status' => 'confirmed',
+        ]);
+
+        Sanctum::actingAs($repB, ['representative']);
+
+        $response = $this->postJson('/api/reps/booking', [
+            'doctors_id' => $doctor->id,
+            'date' => $requestedDate,
+            'start_time' => '10:00:00',
+        ]);
+
+        $response->assertStatus(201);
+        $this->assertDatabaseHas('appointments', [
+            'representative_id' => $repB->id,
+            'doctors_id' => $doctor->id,
+            'date' => $requestedDate,
+            'start_time' => '10:00:00',
+            'status' => 'pending',
+        ]);
+    }
+
+    public function test_reps_profile_returns_daily_visit_fields_and_counts_only_pending_and_confirmed_for_today(): void
+    {
+        [$doctor, $rep] = $this->seedDoctorAppointmentData('pending');
+        $company = Company::findOrFail($rep->company_id);
+        $company->update(['visits_per_day' => 5]);
+
+        $todayInCairo = Carbon::now('Africa/Cairo')->toDateString();
+        $tomorrowInCairo = Carbon::now('Africa/Cairo')->addDay()->toDateString();
+        $startAt = Carbon::now('Africa/Cairo')->addHour()->startOfMinute();
+
+        $seededAppointment = Appointment::firstOrFail();
+        $seededAppointment->update([
+            'date' => $todayInCairo,
+            'start_time' => $startAt->format('H:i:s'),
+            'end_time' => $startAt->copy()->addMinutes(5)->format('H:i:s'),
+            'status' => 'pending',
+        ]);
+
+        Appointment::create([
+            'doctors_id' => $doctor->id,
+            'representative_id' => $rep->id,
+            'company_id' => $rep->company_id,
+            'date' => $todayInCairo,
+            'start_time' => $startAt->copy()->addMinutes(10)->format('H:i:s'),
+            'end_time' => $startAt->copy()->addMinutes(15)->format('H:i:s'),
+            'status' => 'confirmed',
+        ]);
+
+        foreach (['cancelled', 'suspended', 'left', 'deleted'] as $index => $status) {
+            Appointment::create([
+                'doctors_id' => $doctor->id,
+                'representative_id' => $rep->id,
+                'company_id' => $rep->company_id,
+                'date' => $todayInCairo,
+                'start_time' => $startAt->copy()->addMinutes(20 + ($index * 10))->format('H:i:s'),
+                'end_time' => $startAt->copy()->addMinutes(25 + ($index * 10))->format('H:i:s'),
+                'status' => $status,
+            ]);
+        }
+
+        Appointment::create([
+            'doctors_id' => $doctor->id,
+            'representative_id' => $rep->id,
+            'company_id' => $rep->company_id,
+            'date' => $tomorrowInCairo,
+            'start_time' => '20:00:00',
+            'end_time' => '20:05:00',
+            'status' => 'pending',
+        ]);
+
+        Sanctum::actingAs($rep, ['representative']);
+
+        $response = $this->getJson('/api/reps/profile');
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('data.daily_visits_limit', 5);
+        $response->assertJsonPath('data.used_visits_today', 2);
+        $response->assertJsonPath('data.remaining_visits_today', 3);
+    }
+
+    public function test_reps_profile_returns_zero_remaining_when_daily_limit_is_null(): void
+    {
+        [, $rep] = $this->seedDoctorAppointmentData('pending');
+        Company::where('id', $rep->company_id)->update(['visits_per_day' => null]);
+
+        $todayInCairo = Carbon::now('Africa/Cairo')->toDateString();
+        $startAt = Carbon::now('Africa/Cairo')->addHour()->startOfMinute();
+        $appointment = Appointment::firstOrFail();
+
+        $appointment->update([
+            'date' => $todayInCairo,
+            'start_time' => $startAt->format('H:i:s'),
+            'end_time' => $startAt->copy()->addMinutes(5)->format('H:i:s'),
+            'status' => 'confirmed',
+        ]);
+
+        Sanctum::actingAs($rep, ['representative']);
+
+        $response = $this->getJson('/api/reps/profile');
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('data.daily_visits_limit', 0);
+        $response->assertJsonPath('data.used_visits_today', 1);
+        $response->assertJsonPath('data.remaining_visits_today', 0);
+    }
+
+    public function test_reps_profile_usage_matches_booking_guard_for_today(): void
+    {
+        [$doctor, $rep] = $this->seedDoctorAppointmentData('pending');
+        Company::where('id', $rep->company_id)->update(['visits_per_day' => 1]);
+
+        $todayInCairo = Carbon::now('Africa/Cairo')->toDateString();
+        $appointment = Appointment::firstOrFail();
+
+        $appointment->update([
+            'date' => $todayInCairo,
+            'start_time' => '09:00:00',
+            'end_time' => '09:05:00',
+            'status' => 'confirmed',
+        ]);
+
+        Sanctum::actingAs($rep, ['representative']);
+
+        $profileResponse = $this->getJson('/api/reps/profile');
+        $profileResponse->assertStatus(200);
+        $profileResponse->assertJsonPath('data.daily_visits_limit', 1);
+        $profileResponse->assertJsonPath('data.used_visits_today', 1);
+        $profileResponse->assertJsonPath('data.remaining_visits_today', 0);
+
+        $bookingResponse = $this->postJson('/api/reps/booking', [
+            'doctors_id' => $doctor->id,
+            'date' => $todayInCairo,
+            'start_time' => '10:00:00',
+        ]);
+
+        $bookingResponse->assertStatus(403);
+        $bookingResponse->assertJsonPath('message', 'You have reached the maximum number of appointments allowed for the selected date');
+    }
+
     public function test_doctor_cancelled_endpoint_does_not_leak_other_doctors_appointments(): void
     {
         [$doctor, $rep] = $this->seedDoctorAppointmentData('cancelled');
@@ -769,6 +1073,10 @@ class DoctorAppointmentsPhoneTest extends TestCase
     {
         foreach ([
             'personal_access_tokens',
+            'line_representative',
+            'area_representative',
+            'lines',
+            'areas',
             'appointments',
             'representatives',
             'companies',
@@ -839,6 +1147,28 @@ class DoctorAppointmentsPhoneTest extends TestCase
             $table->timestamps();
         });
 
+        Schema::create('areas', function (Blueprint $table) {
+            $table->id();
+            $table->string('name');
+            $table->timestamps();
+        });
+
+        Schema::create('lines', function (Blueprint $table) {
+            $table->id();
+            $table->string('name');
+            $table->timestamps();
+        });
+
+        Schema::create('area_representative', function (Blueprint $table) {
+            $table->unsignedBigInteger('area_id');
+            $table->unsignedBigInteger('representative_id');
+        });
+
+        Schema::create('line_representative', function (Blueprint $table) {
+            $table->unsignedBigInteger('line_id');
+            $table->unsignedBigInteger('representative_id');
+        });
+
         Schema::create('appointments', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('doctors_id');
@@ -847,7 +1177,7 @@ class DoctorAppointmentsPhoneTest extends TestCase
             $table->date('date')->nullable();
             $table->time('start_time');
             $table->time('end_time');
-            $table->enum('status', ['cancelled', 'confirmed', 'pending', 'left', 'suspended'])->nullable();
+            $table->enum('status', ['cancelled', 'confirmed', 'pending', 'left', 'suspended', 'deleted'])->nullable();
             $table->uuid('appointment_code')->unique();
             $table->string('cancelled_by')->nullable();
             $table->timestamps();

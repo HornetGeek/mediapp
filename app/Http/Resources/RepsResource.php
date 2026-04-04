@@ -20,6 +20,9 @@ class RepsResource extends JsonResource
             'email' => $this->email,
             'phone' => $this->phone,
             'status' => $this->status,
+            'daily_visits_limit' => max(0, (int) ($this->daily_visits_limit ?? (optional($this->company)->visits_per_day ?? 0))),
+            'used_visits_today' => max(0, (int) ($this->used_visits_today ?? 0)),
+            'remaining_visits_today' => max(0, (int) ($this->remaining_visits_today ?? 0)),
             'areas' => $this->whenLoaded('areas', function () {
                 return $this->areas->map(function ($area) {
                     return [
