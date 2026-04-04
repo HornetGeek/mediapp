@@ -22,6 +22,7 @@ class SendNotificationEvent
     public $data;
     public $target_type;
     public $dedupe_key;
+    // Deprecated for runtime dedupe logic; kept for constructor backward compatibility.
     public $dedupe_window_minutes;
 
     /**

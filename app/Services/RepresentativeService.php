@@ -88,14 +88,29 @@ class RepresentativeService
             return ApiResponse::sendResponse(403, 'Unauthorized action', []);
         }
 
-        foreach ($representative->appointments as $appointment) {
-            $doctor = $appointment->doctor;
+        $doctors = $representative->appointments()
+            ->with('doctor')
+            ->get()
+            ->pluck('doctor')
+            ->filter()
+            ->unique('id');
+
+        foreach ($doctors as $doctor) {
             if (!empty($doctor->fcm_token)) {
                 try {
+                    $dedupeKey = sprintf(
+                        'rep_deleted:%d:to:doctor:%d',
+                        (int) $representative->id,
+                        (int) $doctor->id
+                    );
+
                     event(new SendNotificationEvent(
                         $doctor,
                         'تم إلغاء الموعد',
-                        'تم حذف المندوب ' . $representative->name . ' من قبل الشركة، وتم إلغاء جميع المواعيد الخاصة به.'
+                        'تم حذف المندوب ' . $representative->name . ' من قبل الشركة، وتم إلغاء جميع المواعيد الخاصة به.',
+                        null,
+                        [],
+                        $dedupeKey
                     ));
                 } catch (\Exception $e) {
                     \Log::error('خطأ أثناء إرسال إشعار للطبيب: ' . $doctor->id . ' - ' . $e->getMessage());

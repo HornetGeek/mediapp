@@ -193,6 +193,18 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
             'representative_id' => $rep->id,
             'status' => 'pending',
         ]);
+
+        $appointment = Appointment::query()
+            ->where('doctors_id', $doctor->id)
+            ->where('representative_id', $rep->id)
+            ->firstOrFail();
+
+        $expectedDedupeKey = sprintf(
+            'appointment:%d:booked:to:doctor:%d',
+            (int) $appointment->id,
+            (int) $doctor->id
+        );
+
         $this->assertDatabaseHas('notifications', [
             'notifiable_id' => $doctor->id,
             'notifiable_type' => Doctors::class,
@@ -200,6 +212,7 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
             'body' => $expectedBody,
             'is_read' => false,
             'target_type' => 'doctor',
+            'dedupe_key' => $expectedDedupeKey,
         ]);
     }
 
@@ -455,10 +468,12 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
             $table->boolean('is_read')->default(false);
             $table->enum('target_type', ['doctor', 'reps', 'company'])->nullable();
             $table->string('dedupe_key')->nullable();
+            $table->char('dedupe_fingerprint', 64)->nullable();
             $table->unsignedBigInteger('notifiable_id')->nullable();
             $table->string('notifiable_type')->nullable();
             $table->timestamps();
             $table->index('dedupe_key', 'notifications_dedupe_key_index');
+            $table->unique('dedupe_fingerprint', 'notifications_dedupe_fingerprint_unique');
         });
     }
 

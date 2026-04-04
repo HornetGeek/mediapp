@@ -25,6 +25,22 @@ class AppointmentCancellationAndBookedService
         if ($appointment->status === 'cancelled') {
             return ApiResponse::sendResponse(400, 'Appointment is already cancelled', []);
         }
+        if ($appointment->status === 'deleted') {
+            return ApiResponse::sendResponse(400, 'Appointment is already deleted', []);
+        }
+        if ($appointment->status === 'left') {
+            return ApiResponse::sendResponse(400, 'You can\'t cancel appointment in left status', []);
+        }
+        if ($appointment->status === 'suspended') {
+            $appointment->update([
+                'status' => 'deleted',
+                'cancelled_by' => 'Reps.' . $reps->name,
+            ]);
+
+            $this->notifyDoctor($appointment, $reps);
+
+            return ApiResponse::sendResponse(200, 'Appointment cancelled successfully', new AppointmentsResource($appointment));
+        }
 
         $dateNow = Carbon::now('Asia/Riyadh');
         $parseAppointmentDate = Carbon::parse($appointment->date)->format('Y-m-d');
@@ -144,8 +160,14 @@ class AppointmentCancellationAndBookedService
         $formatted = $date->format('D d, M g:i A');
 
         $message = 'Visit With ' . $reps->name . ' has been cancelled by the representative. ' . $formatted;
+        $dedupeKey = sprintf(
+            'appointment:%d:rep_cancel:%s:to:doctor:%d',
+            (int) $appointment->id,
+            (string) $appointment->status,
+            (int) $doctor->id
+        );
 
-        event(new SendNotificationEvent($doctor, 'Visit Cancelled by Rep', $message, 'doctor'));
+        event(new SendNotificationEvent($doctor, 'Visit Cancelled by Rep', $message, 'doctor', [], $dedupeKey));
     }
 
     private function notifySuccessDoctor($appointment, $reps)
@@ -156,7 +178,12 @@ class AppointmentCancellationAndBookedService
         $formatted = $date->format('D d, M g:i A');
 
         $message = 'Visit With ' . $reps->name . ' has been Confirmed by the representative. ' . $formatted;
+        $dedupeKey = sprintf(
+            'appointment:%d:rep_confirmed:to:doctor:%d',
+            (int) $appointment->id,
+            (int) $doctor->id
+        );
 
-        event(new SendNotificationEvent($doctor, 'Visit Confirmed by Rep', $message, 'doctor'));
+        event(new SendNotificationEvent($doctor, 'Visit Confirmed by Rep', $message, 'doctor', [], $dedupeKey));
     }
 }

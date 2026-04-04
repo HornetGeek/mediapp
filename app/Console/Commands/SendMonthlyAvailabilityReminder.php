@@ -25,8 +25,15 @@ class SendMonthlyAvailabilityReminder extends Command
     {
         Log::info('Cron doctor:monthly-reminder started at ' . now());
         $doctors = Doctors::all();
+        $currentMonth = now()->format('Y-m');
 
         foreach ($doctors as $doctor) {
+            $dedupeKey = sprintf(
+                'monthly_availability_reminder:doctor:%d:month:%s',
+                (int) $doctor->id,
+                $currentMonth
+            );
+
             event(new SendNotificationEvent(
                 $doctor,
                 'إعداد المواعيد الجديدة',
@@ -35,7 +42,9 @@ class SendMonthlyAvailabilityReminder extends Command
                     'action_type' => 'availabilities_setup',
                     'option_copy_last_month' => 'api/doctor/availabilities/copy-last-month',
                     'option_edit_times' => 'api/doctor/availabilities/save'
-                ]
+                ],
+                [],
+                $dedupeKey
             ));
         }
         Log::info('Cron doctor:monthly-reminder finished at ' . now());
