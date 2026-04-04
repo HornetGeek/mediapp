@@ -28,12 +28,25 @@ use Illuminate\Support\Facades\Validator;
 class RepsController extends Controller
 {
 
-    public function getRepsProfile()
+    public function getRepsProfile(AppointmentStatusRefreshService $statusRefresh)
     {
         $rep = auth()->user();
 
         if ($rep) {
-            return ApiResponse::sendResponse(200, 'Representative Profile fetched successfully', new RepsResource($rep->load(['company', 'areas', 'lines'])));
+            $representativeId = $this->refreshRepresentativeAppointments($statusRefresh);
+            $todayInCairo = Carbon::now('Africa/Cairo')->toDateString();
+
+            $rep->load(['company', 'areas', 'lines']);
+
+            $dailyVisitsLimit = $this->resolveRepresentativeDailyVisitsLimit($rep);
+            $usedVisitsToday = $this->countUsedVisitsForDate($representativeId, $todayInCairo);
+            $remainingVisitsToday = max(0, $dailyVisitsLimit - $usedVisitsToday);
+
+            $rep->setAttribute('daily_visits_limit', $dailyVisitsLimit);
+            $rep->setAttribute('used_visits_today', $usedVisitsToday);
+            $rep->setAttribute('remaining_visits_today', $remainingVisitsToday);
+
+            return ApiResponse::sendResponse(200, 'Representative Profile fetched successfully', new RepsResource($rep));
         }
 
         return ApiResponse::sendResponse(404, 'Representative not found', []);
@@ -171,28 +184,20 @@ class RepsController extends Controller
             return ApiResponse::sendResponse(409, $duplicateSlotMessage, []);
         }
 
-        // Check if how many appointments each company has today
-        $today = Carbon::now();
-        $date_Check = $today->toDateString();
+        // Check how many active appointments the representative has on the requested booking date.
+        $todayInCairo = Carbon::now('Africa/Cairo')->toDateString();
+        $representative = auth()->user();
+        $companyId = $representative->company_id;
+        $representativeId = (int) $representative->id;
 
-        // Get the count of appointments for the company on the current date
-        $companyId = auth()->user()->company_id;
-        $representativeId = auth()->user()->id;
-
-        $appointmentCount = Appointment::where('representative_id', $representativeId)
-            ->where('status', 'pending')
-            ->OrWhere('status', 'confirmed')
-            ->whereDate('date', $date_Check)
-            ->count();
-
-        // Check if the company has reached its daily limit
-        $maxAppointmentsPerDay = auth()->user()->company->visits_per_day;
+        $appointmentCount = $this->countUsedVisitsForDate($representativeId, (string) $date);
+        $maxAppointmentsPerDay = $this->resolveRepresentativeDailyVisitsLimit($representative);
 
         if ($appointmentCount >= $maxAppointmentsPerDay) {
-            return ApiResponse::sendResponse(403, 'You have reached the maximum number of appointments allowed for today', []);
+            return ApiResponse::sendResponse(403, 'You have reached the maximum number of appointments allowed for the selected date', []);
         }
 
-        if ($date_Check > $date) {
+        if ($todayInCairo > $date) {
             return ApiResponse::sendResponse(422, 'Cannot book an appointment in the past', []);
         }
 
@@ -284,7 +289,7 @@ class RepsController extends Controller
     public function getRepsAppointments(Request $request, AppointmentStatusRefreshService $statusRefresh)
     {
         $validator = Validator::make($request->all(), [
-            'status' => ['nullable', 'in:cancelled,confirmed,pending,left,suspended'],
+            'status' => ['nullable', 'in:cancelled,confirmed,pending,left,suspended,deleted'],
             'search' => ['nullable', 'string', 'max:255'],
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
@@ -345,9 +350,10 @@ class RepsController extends Controller
 
         return $service->completed($book_id, $reps);
     }
-    public function cancellationBooking($book_id, AppointmentCancellationAndBookedService $service)
+    public function cancellationBooking($book_id, AppointmentCancellationAndBookedService $service, AppointmentStatusRefreshService $statusRefresh)
     {
         $reps = auth()->user();
+        $this->refreshRepresentativeAppointments($statusRefresh);
 
         return $service->cancel($book_id, $reps);
     }
@@ -636,6 +642,19 @@ class RepsController extends Controller
         $statusRefresh->refreshForRepresentative($representativeId);
 
         return $representativeId;
+    }
+
+    private function countUsedVisitsForDate(int $representativeId, string $targetDate): int
+    {
+        return Appointment::where('representative_id', $representativeId)
+            ->whereDate('date', $targetDate)
+            ->whereIn('status', ['pending', 'confirmed'])
+            ->count();
+    }
+
+    private function resolveRepresentativeDailyVisitsLimit(Representative $representative): int
+    {
+        return max(0, (int) ($representative->company->visits_per_day ?? 0));
     }
 
     private function buildPaginationMeta($paginator): array
