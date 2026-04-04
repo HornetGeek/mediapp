@@ -151,6 +151,14 @@ class DoctorsController extends Controller
             ->pluck('representative')
             ->unique('id');
         foreach ($representatives as $rep) {
+            $dedupeKey = sprintf(
+                'doctor:%d:busy:%s:%s:cancelled:to:rep:%d',
+                (int) $doctor->id,
+                (string) $doctor->from_date,
+                (string) $doctor->to_date,
+                (int) $rep->id
+            );
+
             event(new SendNotificationEvent(
                 $rep,
                 'Visit Cancelled Due to Doctor’s Custom Busy Period',
@@ -158,7 +166,9 @@ class DoctorsController extends Controller
                 ' is unavailable from ' . $dateBusyFrom .
                 ' to ' . $dateBusyTo .
                 '. Your visit has been cancelled.',
-                'reps'
+                'reps',
+                [],
+                $dedupeKey
             ));
         }
 
@@ -416,7 +426,7 @@ class DoctorsController extends Controller
     public function getDoctorAppointments(Request $request, AppointmentStatusRefreshService $statusRefresh)
     {
         $validator = Validator::make($request->all(), [
-            'status' => ['nullable', 'in:cancelled,confirmed,pending,left,suspended'],
+            'status' => ['nullable', 'in:cancelled,confirmed,pending,left,suspended,deleted'],
             'search' => ['nullable', 'string', 'max:255'],
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
@@ -496,9 +506,21 @@ class DoctorsController extends Controller
         // ]);
 
         $reps = $appointment->representative;
+        $dedupeKey = sprintf(
+            'appointment:%d:doctor_cancelled:to:rep:%d',
+            (int) $appointment->id,
+            (int) $reps->id
+        );
         // dd($reps);
         // $service->sendNotification($reps->fcm_token, $notify->title, $notify->body);
-        event(new SendNotificationEvent($reps, 'Visit Cancelled by Doctor', 'Your visit with Dr.' . $doctor->name . ' has been cancelled', 'reps'));
+        event(new SendNotificationEvent(
+            $reps,
+            'Visit Cancelled by Doctor',
+            'Your visit with Dr.' . $doctor->name . ' has been cancelled',
+            'reps',
+            [],
+            $dedupeKey
+        ));
 
         return ApiResponse::sendResponse(200, 'Appointment cancelled successfully', new DoctorAppointmentsResource($appointment));
     }
@@ -619,7 +641,7 @@ class DoctorsController extends Controller
     {
         $doctor = $request->user();
 
-        DoctorBlock::firstOrCreate([
+        $repBlock = DoctorBlock::firstOrCreate([
             'doctors_id' => $doctor->id,
             'blockable_id' => $repId,
             'blockable_type' => Representative::class,
@@ -636,7 +658,21 @@ class DoctorsController extends Controller
             ->pluck('representative')
             ->unique('id');
         foreach ($representatives as $reps) {
-            event(new SendNotificationEvent($reps, 'Visit Cancelled Due to Doctor Blocking the Rep', 'You’ve been blocked by Dr. ' . $doctor->name . ' Your visit has been cancelled.', 'reps'));
+            $dedupeKey = sprintf(
+                'doctor:%d:block_rep:%d:to:rep:%d',
+                (int) $doctor->id,
+                (int) $repBlock->id,
+                (int) $reps->id
+            );
+
+            event(new SendNotificationEvent(
+                $reps,
+                'Visit Cancelled Due to Doctor Blocking the Rep',
+                'You’ve been blocked by Dr. ' . $doctor->name . ' Your visit has been cancelled.',
+                'reps',
+                [],
+                $dedupeKey
+            ));
         }
 
 
@@ -649,7 +685,7 @@ class DoctorsController extends Controller
         $doctor = $request->user();
 
         if (Company::where('id', $companyId)->exists()) {
-            DoctorBlock::firstOrCreate([
+            $companyBlock = DoctorBlock::firstOrCreate([
                 'doctors_id' => $doctor->id,
                 'blockable_id' => $companyId,
                 'blockable_type' => Company::class,
@@ -667,13 +703,28 @@ class DoctorsController extends Controller
                 ->pluck('representative')
                 ->unique('id');
             foreach ($representatives as $reps) {
-                DoctorBlock::firstOrCreate([
+                $repBlock = DoctorBlock::firstOrCreate([
                     'doctors_id' => $doctor->id,
                     'blockable_id' => $reps->id,
                     'blockable_type' => Representative::class,
                 ]);
 
-                event(new SendNotificationEvent($reps, 'Visit Cancelled Due to Doctor Blocking the Company', 'Dr. ' . $doctor->name . ' has blocked ' . $companyName->name . '. All your visits have been cancelled.', 'reps'));
+                $dedupeKey = sprintf(
+                    'doctor:%d:block_company:%d:block_rep:%d:to:rep:%d',
+                    (int) $doctor->id,
+                    (int) $companyBlock->id,
+                    (int) $repBlock->id,
+                    (int) $reps->id
+                );
+
+                event(new SendNotificationEvent(
+                    $reps,
+                    'Visit Cancelled Due to Doctor Blocking the Company',
+                    'Dr. ' . $doctor->name . ' has blocked ' . $companyName->name . '. All your visits have been cancelled.',
+                    'reps',
+                    [],
+                    $dedupeKey
+                ));
             }
 
             return ApiResponse::sendResponse(200, 'blocked company successfully', []);
@@ -690,12 +741,14 @@ class DoctorsController extends Controller
 
         $companyBlock = DoctorBlock::where('doctors_id', $doctor->id)
             ->where('blockable_id', $companyId)
-            ->where('blockable_type', Company::class);
+            ->where('blockable_type', Company::class)
+            ->first();
 
-        if (!$companyBlock->exists()) {
+        if (!$companyBlock) {
             return ApiResponse::sendResponse(404, 'Block record not found', []);
         }
 
+        $companyBlockId = (int) $companyBlock->id;
         $companyBlock->delete();
 
         // get blocked reps of this company
@@ -718,13 +771,22 @@ class DoctorsController extends Controller
 
         // notify
         foreach ($representatives as $rep) {
+            $dedupeKey = sprintf(
+                'doctor:%d:unblock_company:%d:to:rep:%d',
+                (int) $doctor->id,
+                $companyBlockId,
+                (int) $rep->id
+            );
+
             event(new SendNotificationEvent(
                 $rep,
                 'Company Unblocked',
                 'Dr. ' . $doctor->name .
                 ' has unblocked ' . $company->name .
                 '. You can now book visits.',
-                'reps'
+                'reps',
+                [],
+                $dedupeKey
             ));
         }
 
@@ -760,7 +822,21 @@ class DoctorsController extends Controller
 
         if ($block) {
             $block->delete();
-            event(new SendNotificationEvent($reps, 'Rep Unblock Notification', 'The block has been removed by Dr. ' . $doctor->name . ' You can now book visits.', 'reps'));
+            $dedupeKey = sprintf(
+                'doctor:%d:unblock_rep:%d:to:rep:%d',
+                (int) $doctor->id,
+                (int) $block->id,
+                (int) $reps->id
+            );
+
+            event(new SendNotificationEvent(
+                $reps,
+                'Rep Unblock Notification',
+                'The block has been removed by Dr. ' . $doctor->name . ' You can now book visits.',
+                'reps',
+                [],
+                $dedupeKey
+            ));
             return ApiResponse::sendResponse(200, 'Unblocked representative successfully', []);
         }
 

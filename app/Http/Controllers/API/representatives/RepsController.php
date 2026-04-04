@@ -258,8 +258,20 @@ class RepsController extends Controller
 
         $doctor = $appointment->doctor;
         $dateTime = $start->format('Y-m-d h:i a');
+        $dedupeKey = sprintf(
+            'appointment:%d:booked:to:doctor:%d',
+            (int) $appointment->id,
+            (int) $doctor->id
+        );
 
-        event(new SendNotificationEvent($doctor, 'New visit booked.', 'New visit booked with ' . auth()->user()->name . ' at ' . $dateTime, 'doctor'));
+        event(new SendNotificationEvent(
+            $doctor,
+            'New visit booked.',
+            'New visit booked with ' . auth()->user()->name . ' at ' . $dateTime,
+            'doctor',
+            [],
+            $dedupeKey
+        ));
 		
       	\Log::info('Appointment booked, event fired', [
     		'doctor_id' => $doctor->id,

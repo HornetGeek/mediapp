@@ -301,10 +301,12 @@ class DoctorCompanyNotificationsReadAllTest extends TestCase
             $table->boolean('is_read')->default(false);
             $table->enum('target_type', ['doctor', 'reps', 'company'])->nullable();
             $table->string('dedupe_key')->nullable();
+            $table->char('dedupe_fingerprint', 64)->nullable();
             $table->unsignedBigInteger('notifiable_id')->nullable();
             $table->string('notifiable_type')->nullable();
             $table->timestamps();
+            $table->index('dedupe_key', 'notifications_dedupe_key_index');
+            $table->unique('dedupe_fingerprint', 'notifications_dedupe_fingerprint_unique');
         });
     }
 }
-

@@ -80,15 +80,30 @@ class MakeDoctorsController extends Controller
             return ApiResponse::sendResponse(404, 'No Doctors Found', []);
         }
         
-        foreach ($doctor->appointments as $appointment) {
-            $representative = $appointment->representative;
+        $representatives = $doctor->appointments()
+            ->with('representative')
+            ->get()
+            ->pluck('representative')
+            ->filter()
+            ->unique('id');
+
+        foreach ($representatives as $representative) {
             // dd($representative);
             if(!empty($representative->fcm_token)) {
                 try {
+                    $dedupeKey = sprintf(
+                        'doctor_deleted:%d:to:rep:%d',
+                        (int) $doctor->id,
+                        (int) $representative->id
+                    );
+
                     event(new SendNotificationEvent(
                         $representative,
                         'تم إلغاء الموعد',
-                        'تم حذف الطبيب ' . $doctor->name . ' من قبل المشرف، وتم إلغاء جميع المواعيد الخاصة به.'
+                        'تم حذف الطبيب ' . $doctor->name . ' من قبل المشرف، وتم إلغاء جميع المواعيد الخاصة به.',
+                        null,
+                        [],
+                        $dedupeKey
                     ));
                 } catch (\Exception $e) {
                     \Log::error('خطأ أثناء إرسال إشعار للمندوب: ' . $representative->id . ' - ' . $e->getMessage());
