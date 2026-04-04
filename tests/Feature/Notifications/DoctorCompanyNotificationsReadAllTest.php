@@ -7,6 +7,7 @@ use App\Models\Doctors;
 use App\Models\Notification;
 use App\Models\Representative;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
@@ -202,6 +203,72 @@ class DoctorCompanyNotificationsReadAllTest extends TestCase
 
         $companyResponse = $this->putJson('/api/company/notifications/read');
         $companyResponse->assertStatus(401);
+    }
+
+    public function test_doctor_notifications_endpoint_logs_booked_duplicate_diagnostics_when_debug_enabled(): void
+    {
+        config(['notifications.debug' => true]);
+
+        $doctor = $this->createDoctor('doctor-debug@example.com', '01010000003');
+
+        Notification::create([
+            'title' => 'New visit booked.',
+            'body' => 'Visit A',
+            'is_read' => false,
+            'target_type' => 'doctor',
+            'dedupe_key' => 'appointment:569:booked:to:doctor:' . $doctor->id,
+            'notifiable_id' => $doctor->id,
+            'notifiable_type' => Doctors::class,
+        ]);
+
+        Notification::create([
+            'title' => 'New visit booked.',
+            'body' => 'Visit A',
+            'is_read' => false,
+            'target_type' => 'doctor',
+            'dedupe_key' => 'appointment:569:booked:to:doctor:' . $doctor->id,
+            'notifiable_id' => $doctor->id,
+            'notifiable_type' => Doctors::class,
+        ]);
+
+        Notification::create([
+            'title' => 'New visit booked.',
+            'body' => 'Visit A',
+            'is_read' => false,
+            'target_type' => 'doctor',
+            'dedupe_key' => 'appointment:570:booked:to:doctor:' . $doctor->id,
+            'notifiable_id' => $doctor->id,
+            'notifiable_type' => Doctors::class,
+        ]);
+
+        Notification::create([
+            'title' => 'Other',
+            'body' => 'Not booked',
+            'is_read' => false,
+            'target_type' => 'doctor',
+            'dedupe_key' => 'appointment:999:doctor_cancelled:to:rep:1',
+            'notifiable_id' => $doctor->id,
+            'notifiable_type' => Doctors::class,
+        ]);
+
+        Log::spy();
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $response = $this->getJson('/api/doctor/notifications');
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('code', 200);
+
+        Log::shouldHaveReceived('info')
+            ->withArgs(function ($message, $context) use ($doctor) {
+                return $message === 'Doctor notifications booked diagnostics'
+                    && ($context['doctor_id'] ?? null) === $doctor->id
+                    && ($context['returned_count'] ?? null) === 4
+                    && ($context['booked_count'] ?? null) === 3
+                    && count($context['duplicate_key_groups'] ?? []) === 1
+                    && count($context['duplicate_semantic_groups'] ?? []) === 1;
+            })
+            ->once();
     }
 
     private function createCompany(string $email): Company

@@ -567,12 +567,78 @@ class DoctorsController extends Controller
         $notifications = $doctor->notifications()
             ->orderBy('created_at', 'desc')
             ->get();
+
+        if (config('notifications.debug', false)) {
+            $this->logBookedNotificationDiagnostics((int) $doctor->id, $notifications);
+        }
         
         if( $notifications->isEmpty() ) {
             return ApiResponse::sendResponse(200, 'No notifications found', []);
         }
         
         return ApiResponse::sendResponse(200, 'Notifications fetched successfully', NotificationsResource::collection($notifications));
+    }
+
+    private function logBookedNotificationDiagnostics(int $doctorId, $notifications): void
+    {
+        $bookedNotifications = $notifications
+            ->filter(function ($notification) {
+                $dedupeKey = (string) ($notification->dedupe_key ?? '');
+                return preg_match('/^appointment:\d+:booked:/', $dedupeKey) === 1;
+            })
+            ->values();
+
+        $duplicateKeyGroups = $bookedNotifications
+            ->groupBy('dedupe_key')
+            ->filter(fn($group) => $group->count() > 1)
+            ->map(function ($group) {
+                return [
+                    'dedupe_key' => (string) $group->first()->dedupe_key,
+                    'count' => $group->count(),
+                    'notification_ids' => $group->pluck('id')->values()->all(),
+                    'created_at' => $group->pluck('created_at')
+                        ->map(fn($createdAt) => optional($createdAt)->toDateTimeString())
+                        ->values()
+                        ->all(),
+                ];
+            })
+            ->values()
+            ->all();
+
+        $duplicateSemanticGroups = $bookedNotifications
+            ->groupBy(function ($notification) {
+                return hash('sha256', implode('|', [
+                    (string) ($notification->title ?? ''),
+                    (string) ($notification->body ?? ''),
+                    (string) ($notification->target_type ?? ''),
+                ]));
+            })
+            ->filter(function ($group) {
+                return $group->count() > 1
+                    && $group->pluck('dedupe_key')->filter()->unique()->count() > 1;
+            })
+            ->map(function ($group, $fingerprint) {
+                return [
+                    'semantic_fingerprint' => (string) $fingerprint,
+                    'count' => $group->count(),
+                    'notification_ids' => $group->pluck('id')->values()->all(),
+                    'dedupe_keys' => $group->pluck('dedupe_key')->filter()->unique()->values()->all(),
+                    'created_at' => $group->pluck('created_at')
+                        ->map(fn($createdAt) => optional($createdAt)->toDateTimeString())
+                        ->values()
+                        ->all(),
+                ];
+            })
+            ->values()
+            ->all();
+
+        \Log::info('Doctor notifications booked diagnostics', [
+            'doctor_id' => $doctorId,
+            'returned_count' => $notifications->count(),
+            'booked_count' => $bookedNotifications->count(),
+            'duplicate_key_groups' => $duplicateKeyGroups,
+            'duplicate_semantic_groups' => $duplicateSemanticGroups,
+        ]);
     }
 
     public function markNotificationAsRead($notification_id)

@@ -264,6 +264,18 @@ class RepsController extends Controller
             (int) $doctor->id
         );
 
+        if (config('notifications.debug', false)) {
+            \Log::info('Booked notification dispatch debug', [
+                'appointment_id' => (int) $appointment->id,
+                'doctor_id' => (int) $doctor->id,
+                'rep_id' => (int) auth()->id(),
+                'date' => (string) $date,
+                'slot_start' => $slotStartTime,
+                'slot_end' => $slotEndTime,
+                'dedupe_key' => $dedupeKey,
+            ]);
+        }
+
         event(new SendNotificationEvent(
             $doctor,
             'New visit booked.',
@@ -272,11 +284,6 @@ class RepsController extends Controller
             [],
             $dedupeKey
         ));
-		
-      	\Log::info('Appointment booked, event fired', [
-    		'doctor_id' => $doctor->id,
-    		'doctor_token' => $doctor->fcm_token,
-		]);
       
       
         return ApiResponse::sendResponse(201, 'Appointment booked successfully', new AppointmentsResource($appointment));

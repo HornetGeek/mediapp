@@ -10,6 +10,7 @@ use App\Services\FirebaseNotificationService;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Mockery;
 use Tests\TestCase;
@@ -243,6 +244,87 @@ class NotificationDeduplicationTest extends TestCase
             'notifiable_type' => Doctors::class,
             'dedupe_key' => 'failure-key',
         ]);
+    }
+
+    public function test_listener_logs_booked_debug_metadata_when_enabled(): void
+    {
+        Carbon::setTestNow('2026-06-01 10:00:00');
+        config(['notifications.debug' => true]);
+
+        $doctor = Doctors::create([
+            'name' => 'Doctor Seven',
+            'email' => 'doctor-seven@example.com',
+            'phone' => '01010000007',
+            'password' => 'secret',
+            'fcm_token' => 'token-7',
+        ]);
+
+        $service = Mockery::mock(FirebaseNotificationService::class);
+        $service->shouldReceive('sendNotification')
+            ->once()
+            ->andReturn(['ok' => true]);
+
+        Log::spy();
+
+        $listener = new SendFcmNotificationListener($service);
+        $dedupeKey = sprintf('appointment:%d:booked:to:doctor:%d', 500, $doctor->id);
+
+        $listener->handle(new SendNotificationEvent(
+            $doctor,
+            'New visit booked.',
+            'Body',
+            'doctor',
+            [],
+            $dedupeKey
+        ));
+
+        Log::shouldHaveReceived('info')
+            ->withArgs(function ($message, $context) use ($doctor, $dedupeKey) {
+                return $message === 'Booked notification dedupe debug'
+                    && ($context['notifiable_id'] ?? null) === $doctor->id
+                    && ($context['dedupe_key'] ?? null) === $dedupeKey
+                    && ($context['inserted'] ?? null) === 1
+                    && !empty($context['notification_id']);
+            })
+            ->once();
+    }
+
+    public function test_listener_does_not_emit_booked_debug_logs_when_disabled(): void
+    {
+        Carbon::setTestNow('2026-06-01 10:00:00');
+        config(['notifications.debug' => false]);
+
+        $doctor = Doctors::create([
+            'name' => 'Doctor Eight',
+            'email' => 'doctor-eight@example.com',
+            'phone' => '01010000008',
+            'password' => 'secret',
+            'fcm_token' => 'token-8',
+        ]);
+
+        $service = Mockery::mock(FirebaseNotificationService::class);
+        $service->shouldReceive('sendNotification')
+            ->once()
+            ->andReturn(['ok' => true]);
+
+        Log::spy();
+
+        $listener = new SendFcmNotificationListener($service);
+        $dedupeKey = sprintf('appointment:%d:booked:to:doctor:%d', 501, $doctor->id);
+
+        $listener->handle(new SendNotificationEvent(
+            $doctor,
+            'New visit booked.',
+            'Body',
+            'doctor',
+            [],
+            $dedupeKey
+        ));
+
+        Log::shouldNotHaveReceived('info')
+            ->withArgs(function ($message) {
+                return $message === 'Booked notification dedupe debug';
+            });
     }
 
     private function createTestingSchema(): void
