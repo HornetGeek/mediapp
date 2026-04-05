@@ -15,11 +15,14 @@ class UpdateStatusDoctor extends Command
 
     public function handle()
     {
-        $now = Carbon::now();
-        $getDateNow = $now->toDateString();
+        $getDateNow = Carbon::now('Africa/Cairo')->toDateString();
         $updated = Doctors::where('status', 'busy')
             ->whereDate('to_date', '<', $getDateNow)
-            ->update(['status' => 'active']);
+            ->update([
+                'status' => 'active',
+                'from_date' => null,
+                'to_date' => null,
+            ]);
 
 
         $this->info("Updated {$updated} doctors successfully.");

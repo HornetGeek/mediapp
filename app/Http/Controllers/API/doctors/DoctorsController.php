@@ -25,6 +25,7 @@ use App\Models\Representative;
 use App\Models\Specialty;
 use App\Models\User;
 use App\Services\AppointmentStatusRefreshService;
+use App\Services\DoctorBusyStatusService;
 use App\Services\FirebaseNotificationService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -112,40 +113,54 @@ class DoctorsController extends Controller
         return ApiResponse::sendResponse(200, 'Doctor profile updated successfully', new DoctorResource($doctor));
     }
 
-    public function editStatus(Request $request)
+    public function editStatus(Request $request, DoctorBusyStatusService $doctorBusyStatus)
     {
         $doctor = $request->user();
 
         $validated = Validator::make($request->all(), [
-            'status' => ['sometimes', 'in:active,busy'],
+            'status' => ['required', 'in:active,busy'],
+            'from_date' => ['nullable', 'date_format:Y-m-d'],
+            'to_date' => ['nullable', 'date_format:Y-m-d'],
         ]);
         if ($validated->fails()) {
             return ApiResponse::sendResponse(422, $validated->messages()->first(), []);
         }
 
-        $doctor->update($request->only(['status', 'from_date', 'to_date']));
-        $doctor->save();
-        if($request->status != 'busy'){
+        $status = (string) $request->input('status');
+
+        if ($status === 'active') {
+            $doctor->status = 'active';
             $doctor->from_date = null;
             $doctor->to_date = null;
-            $doctor->status = 'active';
             $doctor->save();
-            
+
             return ApiResponse::sendResponse(200, 'Doctor status updated successfully', new DoctorResource($doctor));
         }
-        // check if status is busy then cancel all pending appointments
-        if ($doctor->status === 'busy') {
-            $appointments = Appointment::with('representative')
-                ->where('doctors_id', $doctor->id)
-                ->where('status', 'pending')
-                ->whereBetween('date', [$doctor->from_date, $doctor->to_date])
-                ->get();
 
-            Appointment::whereIn('id', $appointments->pluck('id'))
-                ->update(['status' => 'cancelled', 'cancelled_by' => 'Dr.' . $doctor->name]);
+        $busyValidationError = $doctorBusyStatus->validateBusyRangeInput(
+            $request->input('from_date'),
+            $request->input('to_date')
+        );
+        if ($busyValidationError !== null) {
+            return ApiResponse::sendResponse(422, $busyValidationError, []);
         }
-        $dateBusyFrom = Carbon::parse($doctor->from_date)->format('Y-m-d h:i a');
-        $dateBusyTo = Carbon::parse($doctor->to_date)->format('Y-m-d h:i a');
+
+        $doctor->status = 'busy';
+        $doctor->from_date = $request->input('from_date');
+        $doctor->to_date = $request->input('to_date');
+        $doctor->save();
+
+        $appointments = Appointment::with('representative')
+            ->where('doctors_id', $doctor->id)
+            ->where('status', 'pending')
+            ->whereBetween('date', [$doctor->from_date, $doctor->to_date])
+            ->get();
+
+        Appointment::whereIn('id', $appointments->pluck('id'))
+            ->update(['status' => 'cancelled', 'cancelled_by' => 'Dr.' . $doctor->name]);
+
+        $dateBusyFrom = Carbon::parse($doctor->from_date, 'Africa/Cairo')->format('Y-m-d');
+        $dateBusyTo = Carbon::parse($doctor->to_date, 'Africa/Cairo')->format('Y-m-d');
 
         $representatives = $appointments
             ->pluck('representative')
@@ -1025,7 +1040,9 @@ class DoctorsController extends Controller
     private function normalizeAvailabilityTimes(string $startTime, string $endTime, bool $endsNextDay): array
     {
         $normalizedStartTime = $this->normalizeAvailabilityTime($startTime);
-        $normalizedEndTime = $this->normalizeAvailabilityTime($endTime);
+        $normalizedEndTime = $this->normalizeAvailabilityTime(
+            $this->normalizeEndTimeBoundary((string) $endTime)
+        );
 
         if ($normalizedStartTime === null || $normalizedEndTime === null) {
             return ['error' => 'Invalid time format, please use hh:mm AM/PM or HH:mm'];
@@ -1049,6 +1066,17 @@ class DoctorsController extends Controller
             'end_time' => $normalizedEndTime,
             'ends_next_day' => $endsNextDay,
         ];
+    }
+
+    private function normalizeEndTimeBoundary(string $endTime): string
+    {
+        $trimmedEndTime = trim($endTime);
+
+        if (preg_match('/^24:00(?::00)?$/', $trimmedEndTime) === 1) {
+            return '23:59:00';
+        }
+
+        return $trimmedEndTime;
     }
 
     private function normalizeAvailabilityDate(string $date): array

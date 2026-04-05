@@ -4,6 +4,7 @@ namespace Tests\Feature\Notifications;
 
 use App\Models\Appointment;
 use App\Models\Company;
+use App\Models\DoctorAvailability;
 use App\Models\Doctors;
 use App\Models\Notification;
 use App\Models\Representative;
@@ -216,6 +217,36 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
         ]);
     }
 
+    public function test_booking_accepts_hour_minute_time_and_normalizes_slot(): void
+    {
+        $company = $this->createCompany();
+        $rep = $this->createRepresentative($company, 'booking-format-rep@example.com', '01055555575');
+        $doctor = $this->createDoctor('booking-format-doctor@example.com', '01066666676');
+
+        Sanctum::actingAs($rep, ['representative']);
+
+        $date = now('Africa/Cairo')->toDateString();
+        $response = $this->postJson('/api/reps/booking', [
+            'doctors_id' => $doctor->id,
+            'date' => $date,
+            'start_time' => '10:00',
+        ]);
+
+        $response->assertStatus(201);
+        $response->assertJsonPath('code', 201);
+
+        $this->assertTrue(
+            Appointment::query()
+                ->where('doctors_id', $doctor->id)
+                ->where('representative_id', $rep->id)
+                ->whereDate('date', $date)
+                ->where('start_time', '10:00:00')
+                ->where('end_time', '10:05:00')
+                ->where('status', 'pending')
+                ->exists()
+        );
+    }
+
     public function test_booking_duplicate_pending_slot_returns_409_with_clear_message(): void
     {
         $company = $this->createCompany();
@@ -365,7 +396,7 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
             'name' => 'Specialty ' . uniqid(),
         ]);
 
-        return Doctors::create([
+        $doctor = Doctors::create([
             'name' => 'Doctor',
             'email' => $email,
             'phone' => $phone,
@@ -374,6 +405,24 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
             'status' => 'active',
             'fcm_token' => $fcmToken,
         ]);
+
+        $this->createFullWeekAvailability($doctor);
+
+        return $doctor;
+    }
+
+    private function createFullWeekAvailability(Doctors $doctor): void
+    {
+        foreach (['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as $weekday) {
+            DoctorAvailability::create([
+                'doctors_id' => $doctor->id,
+                'date' => $weekday,
+                'start_time' => '00:00:00',
+                'end_time' => '23:59:00',
+                'ends_next_day' => false,
+                'status' => 'available',
+            ]);
+        }
     }
 
     private function createTestingSchema(): void
@@ -381,6 +430,7 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
         foreach ([
             'notifications',
             'doctor_blocks',
+            'doctor_availabilities',
             'appointments',
             'representatives',
             'doctors',
@@ -458,6 +508,17 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
             $table->unsignedBigInteger('doctors_id');
             $table->unsignedBigInteger('blockable_id');
             $table->string('blockable_type');
+            $table->timestamps();
+        });
+
+        Schema::create('doctor_availabilities', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('doctors_id');
+            $table->string('date');
+            $table->time('start_time');
+            $table->time('end_time');
+            $table->boolean('ends_next_day')->default(false);
+            $table->enum('status', ['available', 'canceled', 'booked', 'busy'])->default('available');
             $table->timestamps();
         });
 
