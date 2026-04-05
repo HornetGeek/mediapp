@@ -19,6 +19,7 @@ use App\Models\Representative;
 use App\Models\Specialty;
 use App\Services\AppointmentCancellationAndBookedService;
 use App\Services\AppointmentStatusRefreshService;
+use App\Services\DoctorBusyStatusService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Database\QueryException;
@@ -52,7 +53,7 @@ class RepsController extends Controller
         return ApiResponse::sendResponse(404, 'Representative not found', []);
     }
 
-    public function getDoctorProfile($doctor_id)
+    public function getDoctorProfile($doctor_id, DoctorBusyStatusService $doctorBusyStatus)
     {
         $doctor = Doctors::with([
             'specialty',
@@ -65,10 +66,12 @@ class RepsController extends Controller
             return ApiResponse::sendResponse(404, 'Doctor not found', []);
         }
 
+        $doctorBusyStatus->normalizeDoctorBusyState($doctor);
+
         return ApiResponse::sendResponse(200, 'Doctor Profile fetched successfully', new DoctorResource($doctor));
     }
 
-    public function getAvailableTimeForDoctor()
+    public function getAvailableTimeForDoctor(DoctorBusyStatusService $doctorBusyStatus)
     {
         $representative = auth()->user();
         $doctors = Doctors::with([
@@ -91,6 +94,8 @@ class RepsController extends Controller
             })
             ->get();
 
+        $doctorBusyStatus->normalizeDoctorCollectionBusyState($doctors);
+
         if ($doctors->isNotEmpty()) {
             return ApiResponse::sendResponse(200, 'Doctors found Successfully', DoctorResource::collection($doctors));
         }
@@ -109,7 +114,7 @@ class RepsController extends Controller
         return ApiResponse::sendResponse(200, 'Speciality Not Found', []);
     }
 
-    public function filterDoctors(Request $request)
+    public function filterDoctors(Request $request, DoctorBusyStatusService $doctorBusyStatus)
     {
         $rep = $request->user();
         $filters = $request->only(['name', 'location', 'specialty_id']);
@@ -133,6 +138,7 @@ class RepsController extends Controller
             })->get();
 
 
+        $doctorBusyStatus->normalizeDoctorCollectionBusyState($doctors);
 
 
         if ($doctors->isEmpty()) {
@@ -142,7 +148,7 @@ class RepsController extends Controller
         return ApiResponse::sendResponse(200, 'Doctors filtered successfully', DoctorResource::collection($doctors));
     }
 
-    public function bookAppointment(Request $request)
+    public function bookAppointment(Request $request, DoctorBusyStatusService $doctorBusyStatus)
     {
         $duplicateSlotMessage = 'This time slot already has an active appointment (pending or confirmed).';
 
@@ -203,11 +209,9 @@ class RepsController extends Controller
 
         // Check if doctor is busy
         $doctor = Doctors::findOrFail($request->doctors_id);
-        $bookingDate = Carbon::parse($date)->toDateString();
-        $from = Carbon::parse($doctor->from_date)->toDateString();
-        $to = Carbon::parse($doctor->to_date)->toDateString();
-        // remember between(from, to) 
-        if ($doctor->status === 'busy' && $bookingDate >= $from && $bookingDate <= $to) {
+        $doctorBusyStatus->normalizeDoctorBusyState($doctor);
+        $bookingDate = Carbon::parse($date, 'Africa/Cairo')->toDateString();
+        if ($doctorBusyStatus->isDateWithinBusyPeriod($doctor, $bookingDate)) {
             return ApiResponse::sendResponse(403,'Doctor is busy during the selected period',[]);
         }
 
@@ -489,7 +493,7 @@ class RepsController extends Controller
         return $service->changeStatus($appointmentId, $reps);
     }
 
-    public function getDoctorsBySpeciality(Request $request)
+    public function getDoctorsBySpeciality(Request $request, DoctorBusyStatusService $doctorBusyStatus)
     {
         $representative = auth()->user();
         $speciality_id = $request->input('specialty_id');
@@ -513,6 +517,8 @@ class RepsController extends Controller
                 });
             })
             ->get();
+
+        $doctorBusyStatus->normalizeDoctorCollectionBusyState($doctors);
 
         if ($doctors->isNotEmpty()) {
             return ApiResponse::sendResponse(200, 'Doctors fetched successfully', DoctorResource::collection($doctors));

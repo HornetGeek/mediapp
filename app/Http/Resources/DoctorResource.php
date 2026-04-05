@@ -3,6 +3,7 @@
 namespace App\Http\Resources;
 
 use App\Models\Appointment;
+use App\Services\DoctorBusyStatusService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -16,6 +17,10 @@ class DoctorResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
+        /** @var DoctorBusyStatusService $doctorBusyStatus */
+        $doctorBusyStatus = app(DoctorBusyStatusService::class);
+        $busyPeriod = $doctorBusyStatus->buildBusyPeriodPayload($this->resource);
+
         $availableTimes = $this->relationLoaded('availableTimes')
             ? $this->availableTimes
             : $this->availableTimes()->where('status', 'available')->get();
@@ -23,6 +28,10 @@ class DoctorResource extends JsonResource
         $availableTimes = $availableTimes
             ->where('status', 'available')
             ->values();
+
+        if (($busyPeriod['is_active_now'] ?? false) === true) {
+            $availableTimes = collect();
+        }
 
         return [
             'id' => $this->id,
@@ -45,8 +54,9 @@ class DoctorResource extends JsonResource
                 }),
             'is_fav' => $this->favoredByReps->isNotEmpty() ? (bool) $this->favoredByReps->first()->pivot->is_fav : false,
             'status' => $this->status,
-            'from_date' => $this->from_date ? Carbon::parse($this->from_date)->format('l'): null,
-            'to_date' => $this->to_date ? Carbon::parse($this->to_date)->format('l'): null,
+            'from_date' => $doctorBusyStatus->formatDateForResponse((string) $this->from_date),
+            'to_date' => $doctorBusyStatus->formatDateForResponse((string) $this->to_date),
+            'busy_period' => $busyPeriod,
         ];
     }
 }

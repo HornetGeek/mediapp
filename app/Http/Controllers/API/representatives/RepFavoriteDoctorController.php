@@ -6,6 +6,7 @@ use App\Helpers\ApiResponse;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\DoctorResource;
 use App\Models\Doctors;
+use App\Services\DoctorBusyStatusService;
 use Illuminate\Http\Request;
 
 class RepFavoriteDoctorController extends Controller
@@ -50,7 +51,7 @@ class RepFavoriteDoctorController extends Controller
         return ApiResponse::sendResponse(500, 'Failed to remove doctor from favorites', []);
     }
 
-    public function list()
+    public function list(DoctorBusyStatusService $doctorBusyStatus)
     {
         $rep = auth()->user();
         $favoriteDoctors = $rep->favoriteDoctors()
@@ -62,13 +63,15 @@ class RepFavoriteDoctorController extends Controller
             ])
             ->get();
 
+        $doctorBusyStatus->normalizeDoctorCollectionBusyState($favoriteDoctors);
+
         if ($favoriteDoctors->isEmpty()) {
             return ApiResponse::sendResponse(200, 'No favorite doctors found', []);
         }
         return ApiResponse::sendResponse(200, 'Favorite doctors retrieved successfully', DoctorResource::collection($favoriteDoctors));
     }
 
-    public function searchFavoriteDoctors(Request $request)
+    public function searchFavoriteDoctors(Request $request, DoctorBusyStatusService $doctorBusyStatus)
     {
         $request->validate([
             'search' => 'required|string',
@@ -85,6 +88,8 @@ class RepFavoriteDoctorController extends Controller
                 'specialty',
             ])
             ->get();
+
+        $doctorBusyStatus->normalizeDoctorCollectionBusyState($favoriteDoctors);
 
         if ($favoriteDoctors->isEmpty()) {
             return ApiResponse::sendResponse(200, 'No favorite doctors found matching the search criteria', []);

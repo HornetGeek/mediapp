@@ -10,6 +10,7 @@ use App\Models\Doctors;
 use App\Models\Package;
 use App\Models\Representative;
 use App\Models\Specialty;
+use Carbon\Carbon;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 use Laravel\Sanctum\Sanctum;
@@ -210,6 +211,187 @@ class DoctorAvailabilityCrudTest extends TestCase
         $this->assertSame('Monday', $searchPayload['available_times'][0]['date']);
     }
 
+    public function test_rep_doctor_endpoints_expose_busy_period_and_hide_available_times_when_doctor_is_currently_busy(): void
+    {
+        $busyDate = Carbon::now('Africa/Cairo')->toDateString();
+        $doctor = $this->createDoctor('rep-busy-now@example.com', '01111111240');
+        $doctor->update([
+            'name' => 'Doctor Busy Now',
+            'status' => 'busy',
+            'from_date' => $busyDate,
+            'to_date' => $busyDate,
+        ]);
+        $this->createAvailability($doctor, 'monday', '09:00:00', '10:00:00', 'available');
+
+        $rep = $this->createRepresentative('rep-busy-now@example.com', '01011111124');
+        $rep->favoriteDoctors()->attach($doctor->id, ['is_fav' => true]);
+        Sanctum::actingAs($rep, ['representative']);
+
+        $allDoctorsResponse = $this->getJson('/api/reps/doctors/all');
+        $allDoctorsResponse->assertStatus(200);
+        $doctorPayload = collect($allDoctorsResponse->json('data'))->firstWhere('id', $doctor->id);
+        $this->assertNotNull($doctorPayload);
+        $this->assertBusyDoctorPayload($doctorPayload, $busyDate, $busyDate);
+
+        $searchResponse = $this->getJson('/api/reps/doctors/search?name=Busy');
+        $searchResponse->assertStatus(200);
+        $searchPayload = collect($searchResponse->json('data'))->firstWhere('id', $doctor->id);
+        $this->assertNotNull($searchPayload);
+        $this->assertBusyDoctorPayload($searchPayload, $busyDate, $busyDate);
+
+        $profileResponse = $this->getJson('/api/reps/docotr/' . $doctor->id);
+        $profileResponse->assertStatus(200);
+        $this->assertBusyDoctorPayload($profileResponse->json('data'), $busyDate, $busyDate);
+
+        $bySpecialityResponse = $this->getJson('/api/reps/doctorsBySpeciality?specialty_id=' . $doctor->specialty_id);
+        $bySpecialityResponse->assertStatus(200);
+        $specialityPayload = collect($bySpecialityResponse->json('data'))->firstWhere('id', $doctor->id);
+        $this->assertNotNull($specialityPayload);
+        $this->assertBusyDoctorPayload($specialityPayload, $busyDate, $busyDate);
+
+        $favoritesResponse = $this->getJson('/api/reps/favorite-doctors');
+        $favoritesResponse->assertStatus(200);
+        $favoritePayload = collect($favoritesResponse->json('data'))->firstWhere('id', $doctor->id);
+        $this->assertNotNull($favoritePayload);
+        $this->assertBusyDoctorPayload($favoritePayload, $busyDate, $busyDate);
+
+        $favoritesSearchResponse = $this->getJson('/api/reps/search/favorite-doctors?search=Busy');
+        $favoritesSearchResponse->assertStatus(200);
+        $favoriteSearchPayload = collect($favoritesSearchResponse->json('data'))->firstWhere('id', $doctor->id);
+        $this->assertNotNull($favoriteSearchPayload);
+        $this->assertBusyDoctorPayload($favoriteSearchPayload, $busyDate, $busyDate);
+    }
+
+    public function test_representative_doctor_listing_returns_null_busy_period_for_non_busy_doctor(): void
+    {
+        $doctor = $this->createDoctor('rep-not-busy@example.com', '01111111241');
+        $this->createAvailability($doctor, 'monday', '09:00:00', '10:00:00', 'available');
+        $rep = $this->createRepresentative('rep-not-busy@example.com', '01011111125');
+        Sanctum::actingAs($rep, ['representative']);
+
+        $response = $this->getJson('/api/reps/doctors/all');
+        $response->assertStatus(200);
+
+        $doctorPayload = collect($response->json('data'))->firstWhere('id', $doctor->id);
+        $this->assertNotNull($doctorPayload);
+        $this->assertSame('active', $doctorPayload['status']);
+        $this->assertNull($doctorPayload['busy_period']);
+        $this->assertCount(1, $doctorPayload['available_times']);
+        $this->assertSame('available', $doctorPayload['available_times'][0]['status']);
+    }
+
+    public function test_representative_booking_is_blocked_inside_busy_window_and_allowed_outside_it(): void
+    {
+        $busyDate = Carbon::now('Africa/Cairo')->toDateString();
+        $outsideDate = Carbon::now('Africa/Cairo')->addDay()->toDateString();
+
+        $doctor = $this->createDoctor('rep-book-busy@example.com', '01111111242');
+        $doctor->update([
+            'status' => 'busy',
+            'from_date' => $busyDate,
+            'to_date' => $busyDate,
+        ]);
+
+        $rep = $this->createRepresentative('rep-book-busy@example.com', '01011111126');
+        $rep->company()->update(['visits_per_day' => 5]);
+        Sanctum::actingAs($rep, ['representative']);
+
+        $blockedResponse = $this->postJson('/api/reps/booking', [
+            'doctors_id' => $doctor->id,
+            'date' => $busyDate,
+            'start_time' => '09:00 AM',
+        ]);
+        $blockedResponse->assertStatus(403);
+        $blockedResponse->assertJsonPath('message', 'Doctor is busy during the selected period');
+
+        $allowedResponse = $this->postJson('/api/reps/booking', [
+            'doctors_id' => $doctor->id,
+            'date' => $outsideDate,
+            'start_time' => '10:00 AM',
+        ]);
+        $allowedResponse->assertStatus(201);
+        $allowedResponse->assertJsonPath('data.status', 'pending');
+    }
+
+    public function test_representative_doctor_listing_realtime_normalizes_expired_busy_status(): void
+    {
+        $yesterday = Carbon::now('Africa/Cairo')->subDay()->toDateString();
+        $twoDaysAgo = Carbon::now('Africa/Cairo')->subDays(2)->toDateString();
+
+        $doctor = $this->createDoctor('rep-expired-busy@example.com', '01111111243');
+        $doctor->update([
+            'status' => 'busy',
+            'from_date' => $twoDaysAgo,
+            'to_date' => $yesterday,
+        ]);
+        $this->createAvailability($doctor, 'monday', '09:00:00', '10:00:00', 'available');
+
+        $rep = $this->createRepresentative('rep-expired-busy@example.com', '01011111127');
+        Sanctum::actingAs($rep, ['representative']);
+
+        $response = $this->getJson('/api/reps/doctors/all');
+        $response->assertStatus(200);
+
+        $doctorPayload = collect($response->json('data'))->firstWhere('id', $doctor->id);
+        $this->assertNotNull($doctorPayload);
+        $this->assertSame('active', $doctorPayload['status']);
+        $this->assertNull($doctorPayload['from_date']);
+        $this->assertNull($doctorPayload['to_date']);
+        $this->assertNull($doctorPayload['busy_period']);
+        $this->assertCount(1, $doctorPayload['available_times']);
+
+        $doctor->refresh();
+        $this->assertSame('active', $doctor->status);
+        $this->assertNull($doctor->from_date);
+        $this->assertNull($doctor->to_date);
+    }
+
+    public function test_doctor_edit_status_requires_busy_dates_and_valid_date_order(): void
+    {
+        $doctor = $this->createDoctor('doctor-edit-status-validation@example.com', '01111111244');
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $missingDatesResponse = $this->putJson('/api/doctor/edit-status', [
+            'status' => 'busy',
+        ]);
+        $missingDatesResponse->assertStatus(422);
+        $missingDatesResponse->assertJsonPath('message', 'from_date and to_date are required when status is busy');
+
+        $invalidOrderResponse = $this->putJson('/api/doctor/edit-status', [
+            'status' => 'busy',
+            'from_date' => '2026-04-20',
+            'to_date' => '2026-04-19',
+        ]);
+        $invalidOrderResponse->assertStatus(422);
+        $invalidOrderResponse->assertJsonPath('message', 'from_date must be before or equal to to_date');
+    }
+
+    public function test_doctor_edit_status_active_clears_busy_dates_and_busy_period(): void
+    {
+        $doctor = $this->createDoctor('doctor-edit-status-clear@example.com', '01111111245');
+        $doctor->update([
+            'status' => 'busy',
+            'from_date' => '2026-04-20',
+            'to_date' => '2026-04-22',
+        ]);
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $response = $this->putJson('/api/doctor/edit-status', [
+            'status' => 'active',
+        ]);
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('data.status', 'active');
+        $response->assertJsonPath('data.from_date', null);
+        $response->assertJsonPath('data.to_date', null);
+        $response->assertJsonPath('data.busy_period', null);
+
+        $doctor->refresh();
+        $this->assertSame('active', $doctor->status);
+        $this->assertNull($doctor->from_date);
+        $this->assertNull($doctor->to_date);
+    }
+
     public function test_doctor_resource_based_edit_endpoints_return_only_available_times(): void
     {
         $doctor = $this->createDoctor('doctor-resource-filter@example.com', '01111111238');
@@ -315,6 +497,62 @@ class DoctorAvailabilityCrudTest extends TestCase
             'start_time' => '15:30:00',
             'end_time' => '16:30:00',
             'status' => 'available',
+        ]);
+    }
+
+    public function test_save_available_time_accepts_2400_end_time_and_normalizes_to_2359(): void
+    {
+        $doctor = $this->createDoctor('doctor-save-2400@example.com', '01111111246');
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $response = $this->putJson('/api/doctor/save-available-time', [
+            'date' => 'sunday',
+            'start_time' => '00:00',
+            'end_time' => '24:00',
+            'ends_next_day' => true,
+        ]);
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('data.available_times.0.start_time', '12:00 AM');
+        $response->assertJsonPath('data.available_times.0.end_time', '11:59 PM');
+        $response->assertJsonPath('data.available_times.0.ends_next_day', false);
+
+        $this->assertDatabaseHas('doctor_availabilities', [
+            'doctors_id' => $doctor->id,
+            'date' => 'sunday',
+            'start_time' => '00:00:00',
+            'end_time' => '23:59:00',
+            'ends_next_day' => 0,
+            'status' => 'available',
+        ]);
+    }
+
+    public function test_update_available_time_accepts_240000_end_time_and_normalizes_to_2359(): void
+    {
+        $doctor = $this->createDoctor('doctor-update-2400@example.com', '01111111247');
+        $availability = $this->createAvailability($doctor, '2026-04-20', '09:00:00', '10:00:00');
+
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $response = $this->putJson('/api/doctor/available-time/' . $availability->id, [
+            'date' => 'sunday',
+            'start_time' => '00:00',
+            'end_time' => '24:00:00',
+            'ends_next_day' => true,
+        ]);
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('data.start_time', '12:00 AM');
+        $response->assertJsonPath('data.end_time', '11:59 PM');
+        $response->assertJsonPath('data.ends_next_day', false);
+
+        $this->assertDatabaseHas('doctor_availabilities', [
+            'id' => $availability->id,
+            'doctors_id' => $doctor->id,
+            'date' => 'sunday',
+            'start_time' => '00:00:00',
+            'end_time' => '23:59:00',
+            'ends_next_day' => 0,
         ]);
     }
 
@@ -936,6 +1174,24 @@ class DoctorAvailabilityCrudTest extends TestCase
         $invalidTimeResponse->assertStatus(422);
         $invalidTimeResponse->assertJsonPath('message', 'Invalid time format, please use hh:mm AM/PM or HH:mm');
 
+        $invalidStart24Response = $this->putJson('/api/doctor/save-available-time', [
+            'date' => '2026-04-20',
+            'start_time' => '24:00',
+            'end_time' => '23:00',
+        ]);
+
+        $invalidStart24Response->assertStatus(422);
+        $invalidStart24Response->assertJsonPath('message', 'Invalid time format, please use hh:mm AM/PM or HH:mm');
+
+        $invalidEnd2430Response = $this->putJson('/api/doctor/save-available-time', [
+            'date' => '2026-04-20',
+            'start_time' => '00:00',
+            'end_time' => '24:30',
+        ]);
+
+        $invalidEnd2430Response->assertStatus(422);
+        $invalidEnd2430Response->assertJsonPath('message', 'Invalid time format, please use hh:mm AM/PM or HH:mm');
+
         $invalidDateResponse = $this->putJson('/api/doctor/save-available-time', [
             'date' => '20-04-2026',
             'start_time' => '09:00 AM',
@@ -979,6 +1235,18 @@ class DoctorAvailabilityCrudTest extends TestCase
         $payload = $resource->resolve();
 
         $this->assertSame('saturday', $payload['available_times'][0]['date']);
+    }
+
+    private function assertBusyDoctorPayload(array $doctorPayload, string $fromDate, string $toDate): void
+    {
+        $this->assertSame('busy', $doctorPayload['status']);
+        $this->assertSame($fromDate, $doctorPayload['from_date']);
+        $this->assertSame($toDate, $doctorPayload['to_date']);
+        $this->assertIsArray($doctorPayload['busy_period']);
+        $this->assertSame($fromDate, $doctorPayload['busy_period']['from_date']);
+        $this->assertSame($toDate, $doctorPayload['busy_period']['to_date']);
+        $this->assertTrue((bool) $doctorPayload['busy_period']['is_active_now']);
+        $this->assertCount(0, $doctorPayload['available_times']);
     }
 
     private function createDoctor(string $email, string $phone): Doctors
