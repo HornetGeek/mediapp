@@ -291,6 +291,13 @@ class DoctorAvailabilityCrudTest extends TestCase
             'from_date' => $busyDate,
             'to_date' => $busyDate,
         ]);
+        $this->createAvailability(
+            $doctor,
+            strtolower(Carbon::parse($outsideDate)->format('l')),
+            '09:00:00',
+            '11:00:00',
+            'available'
+        );
 
         $rep = $this->createRepresentative('rep-book-busy@example.com', '01011111126');
         $rep->company()->update(['visits_per_day' => 5]);

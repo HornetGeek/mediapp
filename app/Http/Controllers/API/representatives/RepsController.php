@@ -12,11 +12,13 @@ use App\Http\Resources\RepsResource;
 use App\Http\Resources\SpecialtiesResource;
 use App\Models\Appointment;
 use App\Models\Company;
+use App\Models\DoctorAvailability;
 use App\Models\DoctorBlock;
 use App\Models\Doctors;
 use App\Models\Notification;
 use App\Models\Representative;
 use App\Models\Specialty;
+use App\Services\AppointmentBookingInputService;
 use App\Services\AppointmentCancellationAndBookedService;
 use App\Services\AppointmentStatusRefreshService;
 use App\Services\DoctorBusyStatusService;
@@ -28,6 +30,7 @@ use Illuminate\Support\Facades\Validator;
 
 class RepsController extends Controller
 {
+    private const BOOKING_TIMEZONE = 'Africa/Cairo';
 
     public function getRepsProfile(AppointmentStatusRefreshService $statusRefresh)
     {
@@ -148,13 +151,18 @@ class RepsController extends Controller
         return ApiResponse::sendResponse(200, 'Doctors filtered successfully', DoctorResource::collection($doctors));
     }
 
-    public function bookAppointment(Request $request, DoctorBusyStatusService $doctorBusyStatus)
+    public function bookAppointment(
+        Request $request,
+        DoctorBusyStatusService $doctorBusyStatus,
+        AppointmentBookingInputService $bookingInput
+    )
     {
         $duplicateSlotMessage = 'This time slot already has an active appointment (pending or confirmed).';
 
         $validated = Validator::make($request->all(), [
             'doctors_id' => 'required|exists:doctors,id',
-            'start_time' => 'required',
+            'date' => 'required|string',
+            'start_time' => 'required|string',
         ]);
 
 
@@ -164,11 +172,20 @@ class RepsController extends Controller
             return ApiResponse::sendResponse(422, $validated->messages()->first(), []);
         }
 
-        $date = $request->date;
-        $start = Carbon::parse($date . ' ' . $request->start_time);
-        $end = $start->copy()->addMinutes(5);
-        $slotStartTime = $start->format('H:i:s');
-        $slotEndTime = $end->format('H:i:s');
+        $normalizedSlot = $bookingInput->buildSlot(
+            (string) $request->input('date'),
+            (string) $request->input('start_time'),
+            5
+        );
+        if (isset($normalizedSlot['error'])) {
+            return ApiResponse::sendResponse(422, (string) $normalizedSlot['error'], []);
+        }
+
+        $date = (string) $normalizedSlot['date'];
+        $start = $normalizedSlot['start_at'];
+        $end = $normalizedSlot['end_at'];
+        $slotStartTime = (string) $normalizedSlot['start_time'];
+        $slotEndTime = (string) $normalizedSlot['end_time'];
 
 
         // Check if there datetime booked
@@ -191,7 +208,7 @@ class RepsController extends Controller
         }
 
         // Check how many active appointments the representative has on the requested booking date.
-        $todayInCairo = Carbon::now('Africa/Cairo')->toDateString();
+        $todayInCairo = Carbon::now(self::BOOKING_TIMEZONE)->toDateString();
         $representative = auth()->user();
         $companyId = $representative->company_id;
         $representativeId = (int) $representative->id;
@@ -210,7 +227,7 @@ class RepsController extends Controller
         // Check if doctor is busy
         $doctor = Doctors::findOrFail($request->doctors_id);
         $doctorBusyStatus->normalizeDoctorBusyState($doctor);
-        $bookingDate = Carbon::parse($date, 'Africa/Cairo')->toDateString();
+        $bookingDate = $date;
         if ($doctorBusyStatus->isDateWithinBusyPeriod($doctor, $bookingDate)) {
             return ApiResponse::sendResponse(403,'Doctor is busy during the selected period',[]);
         }
@@ -240,6 +257,11 @@ class RepsController extends Controller
         if ($appointmentStatusWithDoctor) {
             return ApiResponse::sendResponse(403, 'You cannot book appointment with this doctor, because you have previous book not completed', []);
         }
+
+        if (!$this->isBookingSlotWithinDoctorAvailability((int) $request->doctors_id, $start, $end)) {
+            return ApiResponse::sendResponse(422, 'Requested time is outside doctor availability', []);
+        }
+
         try {
             $appointment = Appointment::create([
                 'doctors_id' => $request->doctors_id,
@@ -307,6 +329,114 @@ class RepsController extends Controller
 
         return str_contains($message, 'appointments_active_slot_unique')
             || str_contains($message, 'unique constraint failed: appointments.doctors_id, appointments.date, appointments.start_time, appointments.slot_lock');
+    }
+
+    private function isBookingSlotWithinDoctorAvailability(
+        int $doctorId,
+        Carbon $slotStartAt,
+        Carbon $slotEndAt
+    ): bool {
+        $availabilities = DoctorAvailability::query()
+            ->where('doctors_id', $doctorId)
+            ->where('status', 'available')
+            ->get(['date', 'start_time', 'end_time', 'ends_next_day']);
+
+        foreach ($availabilities as $availability) {
+            if ($this->availabilityCoversSlot($availability, $slotStartAt, $slotEndAt)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function availabilityCoversSlot(
+        DoctorAvailability $availability,
+        Carbon $slotStartAt,
+        Carbon $slotEndAt
+    ): bool {
+        $anchorDates = [
+            $slotStartAt->copy()->startOfDay(),
+            $slotStartAt->copy()->subDay()->startOfDay(),
+        ];
+
+        foreach ($anchorDates as $anchorDate) {
+            if (!$this->availabilityMatchesAnchorDate((string) $availability->date, $anchorDate)) {
+                continue;
+            }
+
+            $availabilityInterval = $this->buildAvailabilityInterval($availability, $anchorDate);
+            if ($availabilityInterval === null) {
+                continue;
+            }
+
+            if (
+                $slotStartAt->greaterThanOrEqualTo($availabilityInterval['start_at'])
+                && $slotEndAt->lessThanOrEqualTo($availabilityInterval['end_at'])
+            ) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function availabilityMatchesAnchorDate(string $availabilityDate, Carbon $anchorDate): bool
+    {
+        $trimmedAvailabilityDate = trim($availabilityDate);
+        if ($trimmedAvailabilityDate === '') {
+            return false;
+        }
+
+        $normalizedWeekday = strtolower($trimmedAvailabilityDate);
+        if ($normalizedWeekday === strtolower($anchorDate->format('l'))) {
+            return true;
+        }
+
+        try {
+            $parsedDate = Carbon::createFromFormat('Y-m-d', $trimmedAvailabilityDate, self::BOOKING_TIMEZONE);
+        } catch (\Throwable $exception) {
+            return false;
+        }
+
+        if ($parsedDate->format('Y-m-d') !== $trimmedAvailabilityDate) {
+            return false;
+        }
+
+        return $parsedDate->toDateString() === $anchorDate->toDateString();
+    }
+
+    private function buildAvailabilityInterval(DoctorAvailability $availability, Carbon $anchorDate): ?array
+    {
+        $startTimeParts = $this->parseStoredTime((string) $availability->start_time);
+        $endTimeParts = $this->parseStoredTime((string) $availability->end_time);
+        if ($startTimeParts === null || $endTimeParts === null) {
+            return null;
+        }
+
+        $startAt = $anchorDate->copy()->setTime($startTimeParts[0], $startTimeParts[1], $startTimeParts[2]);
+        $endAt = $anchorDate->copy()->setTime($endTimeParts[0], $endTimeParts[1], $endTimeParts[2]);
+
+        $isOvernight = (bool) $availability->ends_next_day
+            || ((string) $availability->end_time <= (string) $availability->start_time);
+        if ($isOvernight) {
+            $endAt->addDay();
+        }
+
+        return [
+            'start_at' => $startAt,
+            'end_at' => $endAt,
+        ];
+    }
+
+    private function parseStoredTime(string $time): ?array
+    {
+        $trimmedTime = trim($time);
+        if (preg_match('/^([01]?[0-9]|2[0-3]):([0-5][0-9]):([0-5][0-9])$/', $trimmedTime, $matches) !== 1) {
+            return null;
+        }
+
+        return [(int) $matches[1], (int) $matches[2], (int) $matches[3]];
     }
 
     public function getRepsAppointments(Request $request, AppointmentStatusRefreshService $statusRefresh)

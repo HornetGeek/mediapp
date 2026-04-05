@@ -4,6 +4,7 @@ namespace Tests\Feature\Doctors;
 
 use App\Models\Appointment;
 use App\Models\Company;
+use App\Models\DoctorAvailability;
 use App\Models\Doctors;
 use App\Models\Package;
 use App\Models\Representative;
@@ -768,6 +769,212 @@ class DoctorAppointmentsPhoneTest extends TestCase
         $response->assertJsonPath('message', 'You can\'t cancel appointment in left status');
     }
 
+    public function test_booking_requires_strict_date_and_rejects_rollover_values(): void
+    {
+        [$doctor, $rep] = $this->seedDoctorAppointmentData('confirmed');
+        Company::where('id', $rep->company_id)->update(['visits_per_day' => 10]);
+        Sanctum::actingAs($rep, ['representative']);
+
+        $missingDateResponse = $this->postJson('/api/reps/booking', [
+            'doctors_id' => $doctor->id,
+            'start_time' => '10:00:00',
+        ]);
+        $missingDateResponse->assertStatus(422);
+        $missingDateResponse->assertJsonPath('message', 'The date field is required.');
+
+        $rolloverDateResponse = $this->postJson('/api/reps/booking', [
+            'doctors_id' => $doctor->id,
+            'date' => '2026-02-31',
+            'start_time' => '10:00:00',
+        ]);
+        $rolloverDateResponse->assertStatus(422);
+        $rolloverDateResponse->assertJsonPath('message', 'date must be in Y-m-d format');
+
+        $weekdayDateResponse = $this->postJson('/api/reps/booking', [
+            'doctors_id' => $doctor->id,
+            'date' => 'sunday',
+            'start_time' => '10:00:00',
+        ]);
+        $weekdayDateResponse->assertStatus(422);
+        $weekdayDateResponse->assertJsonPath('message', 'date must be in Y-m-d format');
+    }
+
+    public function test_booking_accepts_supported_time_formats_and_normalizes_to_h_i_s(): void
+    {
+        [$doctor, $rep] = $this->seedDoctorAppointmentData('confirmed');
+        Company::where('id', $rep->company_id)->update(['visits_per_day' => 10]);
+
+        $requestedDate = Carbon::now('Africa/Cairo')->addDays(3)->toDateString();
+        Sanctum::actingAs($rep, ['representative']);
+
+        $amPmResponse = $this->postJson('/api/reps/booking', [
+            'doctors_id' => $doctor->id,
+            'date' => $requestedDate,
+            'start_time' => '09:00 AM',
+        ]);
+        $amPmResponse->assertStatus(201);
+        $this->assertTrue(
+            Appointment::query()
+                ->where('doctors_id', $doctor->id)
+                ->where('representative_id', $rep->id)
+                ->whereDate('date', $requestedDate)
+                ->where('start_time', '09:00:00')
+                ->where('status', 'pending')
+                ->exists()
+        );
+
+        Appointment::query()
+            ->where('doctors_id', $doctor->id)
+            ->where('representative_id', $rep->id)
+            ->where('status', 'pending')
+            ->update(['status' => 'cancelled', 'cancelled_by' => 'system']);
+
+        $hourMinuteResponse = $this->postJson('/api/reps/booking', [
+            'doctors_id' => $doctor->id,
+            'date' => $requestedDate,
+            'start_time' => '10:00',
+        ]);
+        $hourMinuteResponse->assertStatus(201);
+        $this->assertTrue(
+            Appointment::query()
+                ->where('doctors_id', $doctor->id)
+                ->where('representative_id', $rep->id)
+                ->whereDate('date', $requestedDate)
+                ->where('start_time', '10:00:00')
+                ->where('status', 'pending')
+                ->exists()
+        );
+
+        Appointment::query()
+            ->where('doctors_id', $doctor->id)
+            ->where('representative_id', $rep->id)
+            ->where('status', 'pending')
+            ->update(['status' => 'cancelled', 'cancelled_by' => 'system']);
+
+        $hourMinuteSecondResponse = $this->postJson('/api/reps/booking', [
+            'doctors_id' => $doctor->id,
+            'date' => $requestedDate,
+            'start_time' => '11:00:00',
+        ]);
+        $hourMinuteSecondResponse->assertStatus(201);
+        $this->assertTrue(
+            Appointment::query()
+                ->where('doctors_id', $doctor->id)
+                ->where('representative_id', $rep->id)
+                ->whereDate('date', $requestedDate)
+                ->where('start_time', '11:00:00')
+                ->where('status', 'pending')
+                ->exists()
+        );
+    }
+
+    public function test_booking_rejects_24_hour_boundary_start_times(): void
+    {
+        [$doctor, $rep] = $this->seedDoctorAppointmentData('confirmed');
+        Company::where('id', $rep->company_id)->update(['visits_per_day' => 10]);
+        $requestedDate = Carbon::now('Africa/Cairo')->addDays(3)->toDateString();
+
+        Sanctum::actingAs($rep, ['representative']);
+
+        $firstResponse = $this->postJson('/api/reps/booking', [
+            'doctors_id' => $doctor->id,
+            'date' => $requestedDate,
+            'start_time' => '24:00',
+        ]);
+        $firstResponse->assertStatus(422);
+        $firstResponse->assertJsonPath('message', 'start_time cannot use 24:* values');
+
+        $secondResponse = $this->postJson('/api/reps/booking', [
+            'doctors_id' => $doctor->id,
+            'date' => $requestedDate,
+            'start_time' => '24:30',
+        ]);
+        $secondResponse->assertStatus(422);
+        $secondResponse->assertJsonPath('message', 'start_time cannot use 24:* values');
+    }
+
+    public function test_booking_outside_availability_is_rejected(): void
+    {
+        [$doctor, $rep] = $this->seedDoctorAppointmentData('confirmed');
+        Company::where('id', $rep->company_id)->update(['visits_per_day' => 10]);
+
+        DoctorAvailability::query()->where('doctors_id', $doctor->id)->delete();
+        $requestedDate = Carbon::now('Africa/Cairo')->addDays(4)->toDateString();
+        $requestedWeekday = strtolower(Carbon::parse($requestedDate, 'Africa/Cairo')->format('l'));
+        $this->createAvailability($doctor, $requestedWeekday, '09:00:00', '10:00:00');
+
+        Sanctum::actingAs($rep, ['representative']);
+
+        $response = $this->postJson('/api/reps/booking', [
+            'doctors_id' => $doctor->id,
+            'date' => $requestedDate,
+            'start_time' => '10:30:00',
+        ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonPath('message', 'Requested time is outside doctor availability');
+    }
+
+    public function test_booking_inside_same_day_availability_succeeds(): void
+    {
+        [$doctor, $rep] = $this->seedDoctorAppointmentData('confirmed');
+        Company::where('id', $rep->company_id)->update(['visits_per_day' => 10]);
+
+        DoctorAvailability::query()->where('doctors_id', $doctor->id)->delete();
+        $requestedDate = Carbon::now('Africa/Cairo')->addDays(4)->toDateString();
+        $requestedWeekday = strtolower(Carbon::parse($requestedDate, 'Africa/Cairo')->format('l'));
+        $this->createAvailability($doctor, $requestedWeekday, '09:00:00', '11:00:00');
+
+        Sanctum::actingAs($rep, ['representative']);
+
+        $response = $this->postJson('/api/reps/booking', [
+            'doctors_id' => $doctor->id,
+            'date' => $requestedDate,
+            'start_time' => '10:00:00',
+        ]);
+
+        $response->assertStatus(201);
+        $this->assertTrue(
+            Appointment::query()
+                ->where('doctors_id', $doctor->id)
+                ->where('representative_id', $rep->id)
+                ->whereDate('date', $requestedDate)
+                ->where('start_time', '10:00:00')
+                ->where('status', 'pending')
+                ->exists()
+        );
+    }
+
+    public function test_booking_inside_overnight_availability_from_previous_day_succeeds(): void
+    {
+        [$doctor, $rep] = $this->seedDoctorAppointmentData('confirmed');
+        Company::where('id', $rep->company_id)->update(['visits_per_day' => 10]);
+
+        DoctorAvailability::query()->where('doctors_id', $doctor->id)->delete();
+        $requestedDate = Carbon::now('Africa/Cairo')->addDays(4)->toDateString();
+        $previousWeekday = strtolower(Carbon::parse($requestedDate, 'Africa/Cairo')->subDay()->format('l'));
+        $this->createAvailability($doctor, $previousWeekday, '22:00:00', '02:00:00', true);
+
+        Sanctum::actingAs($rep, ['representative']);
+
+        $response = $this->postJson('/api/reps/booking', [
+            'doctors_id' => $doctor->id,
+            'date' => $requestedDate,
+            'start_time' => '01:00:00',
+        ]);
+
+        $response->assertStatus(201);
+        $this->assertTrue(
+            Appointment::query()
+                ->where('doctors_id', $doctor->id)
+                ->where('representative_id', $rep->id)
+                ->whereDate('date', $requestedDate)
+                ->where('start_time', '01:00:00')
+                ->where('status', 'pending')
+                ->exists()
+        );
+    }
+
     public function test_booking_daily_limit_is_enforced_for_requested_date_not_today(): void
     {
         [$doctor, $rep] = $this->seedDoctorAppointmentData('pending');
@@ -1029,6 +1236,7 @@ class DoctorAppointmentsPhoneTest extends TestCase
             'specialty_id' => $specialty->id,
             'status' => 'active',
         ]);
+        $this->createFullWeekAvailability($doctor);
 
         $package = Package::create([
             'name' => 'Quarterly',
@@ -1069,6 +1277,31 @@ class DoctorAppointmentsPhoneTest extends TestCase
         return [$doctor, $rep];
     }
 
+    private function createAvailability(
+        Doctors $doctor,
+        string $date,
+        string $startTime,
+        string $endTime,
+        bool $endsNextDay = false,
+        string $status = 'available'
+    ): DoctorAvailability {
+        return DoctorAvailability::create([
+            'doctors_id' => $doctor->id,
+            'date' => $date,
+            'start_time' => $startTime,
+            'end_time' => $endTime,
+            'ends_next_day' => $endsNextDay,
+            'status' => $status,
+        ]);
+    }
+
+    private function createFullWeekAvailability(Doctors $doctor): void
+    {
+        foreach (['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as $weekday) {
+            $this->createAvailability($doctor, $weekday, '00:00:00', '23:59:00');
+        }
+    }
+
     private function createTestingSchema(): void
     {
         foreach ([
@@ -1077,6 +1310,8 @@ class DoctorAppointmentsPhoneTest extends TestCase
             'area_representative',
             'lines',
             'areas',
+            'doctor_blocks',
+            'doctor_availabilities',
             'appointments',
             'representatives',
             'companies',
@@ -1167,6 +1402,25 @@ class DoctorAppointmentsPhoneTest extends TestCase
         Schema::create('line_representative', function (Blueprint $table) {
             $table->unsignedBigInteger('line_id');
             $table->unsignedBigInteger('representative_id');
+        });
+
+        Schema::create('doctor_blocks', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('doctors_id');
+            $table->unsignedBigInteger('blockable_id');
+            $table->string('blockable_type');
+            $table->timestamps();
+        });
+
+        Schema::create('doctor_availabilities', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('doctors_id');
+            $table->string('date');
+            $table->time('start_time');
+            $table->time('end_time');
+            $table->boolean('ends_next_day')->default(false);
+            $table->enum('status', ['available', 'canceled', 'booked', 'busy'])->default('available');
+            $table->timestamps();
         });
 
         Schema::create('appointments', function (Blueprint $table) {
