@@ -78,10 +78,14 @@ class RepsController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'search' => ['nullable', 'string', 'max:255'],
+            'specialty_id' => ['nullable', 'integer', 'exists:specialties,id'],
+            'address_1' => ['nullable', 'string', 'max:255'],
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ], [], [
             'search' => 'Search',
+            'specialty_id' => 'Specialty',
+            'address_1' => 'Address',
             'page' => 'Page',
             'per_page' => 'Per Page',
         ]);
@@ -116,7 +120,25 @@ class RepsController extends Controller
                     return;
                 }
 
-                $query->where('name', 'like', '%' . $search . '%');
+                $searchTerm = '%' . $search . '%';
+                $query->where(function ($searchQuery) use ($searchTerm) {
+                    $searchQuery->where('name', 'like', $searchTerm)
+                        ->orWhere('address_1', 'like', $searchTerm)
+                        ->orWhereHas('specialty', function ($specialtyQuery) use ($searchTerm) {
+                            $specialtyQuery->where('name', 'like', $searchTerm);
+                        });
+                });
+            })
+            ->when($request->filled('specialty_id'), function ($query) use ($request) {
+                $query->where('specialty_id', (int) $request->input('specialty_id'));
+            })
+            ->when($request->filled('address_1'), function ($query) use ($request) {
+                $address = trim((string) $request->input('address_1'));
+                if ($address === '') {
+                    return;
+                }
+
+                $query->where('address_1', 'like', '%' . $address . '%');
             })
             ->paginate($perPage);
 
