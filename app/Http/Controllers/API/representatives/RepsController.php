@@ -74,8 +74,23 @@ class RepsController extends Controller
         return ApiResponse::sendResponse(200, 'Doctor Profile fetched successfully', new DoctorResource($doctor));
     }
 
-    public function getAvailableTimeForDoctor(DoctorBusyStatusService $doctorBusyStatus)
+    public function getAvailableTimeForDoctor(Request $request, DoctorBusyStatusService $doctorBusyStatus)
     {
+        $validator = Validator::make($request->all(), [
+            'search' => ['nullable', 'string', 'max:255'],
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+        ], [], [
+            'search' => 'Search',
+            'page' => 'Page',
+            'per_page' => 'Per Page',
+        ]);
+
+        if ($validator->fails()) {
+            return ApiResponse::sendResponse(422, $validator->messages()->first(), []);
+        }
+
+        $perPage = (int) $request->input('per_page', 10);
         $representative = auth()->user();
         $doctors = Doctors::with([
             'specialty',
@@ -95,15 +110,25 @@ class RepsController extends Controller
                         ->where('blockable_id', $representative->company_id);
                 });
             })
-            ->get();
+            ->when($request->filled('search'), function ($query) use ($request) {
+                $search = trim((string) $request->input('search'));
+                if ($search === '') {
+                    return;
+                }
 
-        $doctorBusyStatus->normalizeDoctorCollectionBusyState($doctors);
+                $query->where('name', 'like', '%' . $search . '%');
+            })
+            ->paginate($perPage);
 
-        if ($doctors->isNotEmpty()) {
-            return ApiResponse::sendResponse(200, 'Doctors found Successfully', DoctorResource::collection($doctors));
+        $doctorCollection = collect($doctors->items());
+        $doctorBusyStatus->normalizeDoctorCollectionBusyState($doctorCollection);
+        $pagination = $this->buildPaginationMeta($doctors);
+
+        if ($doctors->total() > 0) {
+            return ApiResponse::sendResponse(200, 'Doctors found Successfully', DoctorResource::collection($doctorCollection), $pagination);
         }
 
-        return ApiResponse::sendResponse(200, 'Doctors Not Found', []);
+        return ApiResponse::sendResponse(200, 'Doctors Not Found', [], $pagination);
     }
 
     public function get_Speciality(Request $request)
