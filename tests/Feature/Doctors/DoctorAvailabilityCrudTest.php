@@ -222,6 +222,91 @@ class DoctorAvailabilityCrudTest extends TestCase
         $this->assertTrue(in_array($pageTwoId, [$firstDoctor->id, $secondDoctor->id], true));
     }
 
+    public function test_representative_doctors_all_search_matches_address_and_specialty_name(): void
+    {
+        $cardiology = Specialty::firstOrCreate(['name' => 'Cardiology']);
+        $dermatology = Specialty::create(['name' => 'Dermatology']);
+
+        $addressDoctor = $this->createDoctor('rep-all-address-search@example.com', '01111111284');
+        $addressDoctor->update([
+            'name' => 'Doctor Address Match',
+            'address_1' => 'Alexandria Downtown',
+            'specialty_id' => $cardiology->id,
+        ]);
+        $this->createAvailability($addressDoctor, 'monday', '09:00:00', '10:00:00', 'available');
+
+        $specialtyDoctor = $this->createDoctor('rep-all-specialty-search@example.com', '01111111285');
+        $specialtyDoctor->update([
+            'name' => 'Doctor Specialty Match',
+            'address_1' => 'Cairo Nasr City',
+            'specialty_id' => $dermatology->id,
+        ]);
+        $this->createAvailability($specialtyDoctor, 'monday', '10:00:00', '11:00:00', 'available');
+
+        $rep = $this->createRepresentative('rep-all-address-specialty-search@example.com', '01011111183');
+        Sanctum::actingAs($rep, ['representative']);
+
+        $addressSearchResponse = $this->getJson('/api/reps/doctors/all?search=Downtown&page=1&per_page=10');
+        $addressSearchResponse->assertStatus(200);
+        $addressSearchResponse->assertJsonPath('pagination.total', 1);
+        $addressPayload = collect($addressSearchResponse->json('data'))->firstWhere('id', $addressDoctor->id);
+        $this->assertNotNull($addressPayload);
+
+        $specialtySearchResponse = $this->getJson('/api/reps/doctors/all?search=Dermatology&page=1&per_page=10');
+        $specialtySearchResponse->assertStatus(200);
+        $specialtySearchResponse->assertJsonPath('pagination.total', 1);
+        $specialtyPayload = collect($specialtySearchResponse->json('data'))->firstWhere('id', $specialtyDoctor->id);
+        $this->assertNotNull($specialtyPayload);
+    }
+
+    public function test_representative_doctors_all_supports_specialty_and_address_filters_with_combined_narrowing(): void
+    {
+        $cardiology = Specialty::firstOrCreate(['name' => 'Cardiology']);
+        $neurology = Specialty::create(['name' => 'Neurology']);
+
+        $targetDoctor = $this->createDoctor('rep-all-filter-target@example.com', '01111111286');
+        $targetDoctor->update([
+            'name' => 'Doctor Filter Target',
+            'address_1' => 'Nasr City',
+            'specialty_id' => $cardiology->id,
+        ]);
+        $this->createAvailability($targetDoctor, 'monday', '09:00:00', '10:00:00', 'available');
+
+        $sameSpecialtyDifferentAddress = $this->createDoctor('rep-all-filter-same-specialty@example.com', '01111111287');
+        $sameSpecialtyDifferentAddress->update([
+            'name' => 'Doctor Cardiology Other Area',
+            'address_1' => 'Maadi',
+            'specialty_id' => $cardiology->id,
+        ]);
+        $this->createAvailability($sameSpecialtyDifferentAddress, 'monday', '10:00:00', '11:00:00', 'available');
+
+        $sameAddressDifferentSpecialty = $this->createDoctor('rep-all-filter-same-address@example.com', '01111111288');
+        $sameAddressDifferentSpecialty->update([
+            'name' => 'Doctor Nasr Neurology',
+            'address_1' => 'Nasr City',
+            'specialty_id' => $neurology->id,
+        ]);
+        $this->createAvailability($sameAddressDifferentSpecialty, 'monday', '11:00:00', '12:00:00', 'available');
+
+        $rep = $this->createRepresentative('rep-all-filter-combined@example.com', '01011111184');
+        Sanctum::actingAs($rep, ['representative']);
+
+        $specialtyOnlyResponse = $this->getJson('/api/reps/doctors/all?specialty_id=' . $cardiology->id . '&page=1&per_page=10');
+        $specialtyOnlyResponse->assertStatus(200);
+        $specialtyOnlyResponse->assertJsonPath('pagination.total', 2);
+
+        $addressOnlyResponse = $this->getJson('/api/reps/doctors/all?address_1=Nasr&page=1&per_page=10');
+        $addressOnlyResponse->assertStatus(200);
+        $addressOnlyResponse->assertJsonPath('pagination.total', 2);
+
+        $combinedResponse = $this->getJson('/api/reps/doctors/all?search=Target&specialty_id=' . $cardiology->id . '&address_1=Nasr&page=1&per_page=1');
+        $combinedResponse->assertStatus(200);
+        $combinedResponse->assertJsonPath('pagination.total', 1);
+        $combinedResponse->assertJsonPath('pagination.current_page', 1);
+        $combinedResponse->assertJsonPath('pagination.per_page', 1);
+        $combinedResponse->assertJsonPath('data.0.id', $targetDoctor->id);
+    }
+
     public function test_representative_doctors_all_returns_empty_with_pagination_when_search_has_no_matches(): void
     {
         $doctor = $this->createDoctor('rep-all-empty@example.com', '01111111283');
@@ -254,6 +339,14 @@ class DoctorAvailabilityCrudTest extends TestCase
         $invalidPageResponse = $this->getJson('/api/reps/doctors/all?page=0&per_page=0');
         $invalidPageResponse->assertStatus(422);
         $invalidPageResponse->assertJsonPath('code', 422);
+
+        $invalidSpecialtyResponse = $this->getJson('/api/reps/doctors/all?specialty_id=999999');
+        $invalidSpecialtyResponse->assertStatus(422);
+        $invalidSpecialtyResponse->assertJsonPath('code', 422);
+
+        $invalidAddressResponse = $this->getJson('/api/reps/doctors/all?address_1[]=cairo');
+        $invalidAddressResponse->assertStatus(422);
+        $invalidAddressResponse->assertJsonPath('code', 422);
     }
 
     public function test_representative_favorite_doctor_endpoints_return_only_available_times(): void
