@@ -29,10 +29,6 @@ class DoctorResource extends JsonResource
             ->where('status', 'available')
             ->values();
 
-        if (($busyPeriod['is_active_now'] ?? false) === true) {
-            $availableTimes = collect();
-        }
-
         return [
             'id' => $this->id,
             'name' => $this->name,
