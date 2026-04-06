@@ -259,6 +259,35 @@ class DoctorAvailabilityCrudTest extends TestCase
         $this->assertNotNull($specialtyPayload);
     }
 
+    public function test_representative_doctors_all_supports_specialty_name_filter(): void
+    {
+        $internalMedicine = Specialty::firstOrCreate(['name' => 'Internal Medicine']);
+        $orthopedics = Specialty::create(['name' => 'Orthopedics']);
+
+        $internalDoctor = $this->createDoctor('rep-all-specialty-param-internal@example.com', '01111111289');
+        $internalDoctor->update([
+            'name' => 'Doctor Internal',
+            'specialty_id' => $internalMedicine->id,
+        ]);
+        $this->createAvailability($internalDoctor, 'monday', '09:00:00', '10:00:00', 'available');
+
+        $otherDoctor = $this->createDoctor('rep-all-specialty-param-other@example.com', '01111111290');
+        $otherDoctor->update([
+            'name' => 'Doctor Orthopedics',
+            'specialty_id' => $orthopedics->id,
+        ]);
+        $this->createAvailability($otherDoctor, 'monday', '10:00:00', '11:00:00', 'available');
+
+        $rep = $this->createRepresentative('rep-all-specialty-param@example.com', '01011111185');
+        Sanctum::actingAs($rep, ['representative']);
+
+        $response = $this->getJson('/api/reps/doctors/all?specialty=Internal%20Medicine&page=1&per_page=10');
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('pagination.total', 1);
+        $response->assertJsonPath('data.0.id', $internalDoctor->id);
+    }
+
     public function test_representative_doctors_all_supports_specialty_and_address_filters_with_combined_narrowing(): void
     {
         $cardiology = Specialty::firstOrCreate(['name' => 'Cardiology']);
@@ -299,7 +328,11 @@ class DoctorAvailabilityCrudTest extends TestCase
         $addressOnlyResponse->assertStatus(200);
         $addressOnlyResponse->assertJsonPath('pagination.total', 2);
 
-        $combinedResponse = $this->getJson('/api/reps/doctors/all?search=Target&specialty_id=' . $cardiology->id . '&address_1=Nasr&page=1&per_page=1');
+        $specialtyNameOnlyResponse = $this->getJson('/api/reps/doctors/all?specialty=Cardio&page=1&per_page=10');
+        $specialtyNameOnlyResponse->assertStatus(200);
+        $specialtyNameOnlyResponse->assertJsonPath('pagination.total', 2);
+
+        $combinedResponse = $this->getJson('/api/reps/doctors/all?search=Target&specialty=Cardio&specialty_id=' . $cardiology->id . '&address_1=Nasr&page=1&per_page=1');
         $combinedResponse->assertStatus(200);
         $combinedResponse->assertJsonPath('pagination.total', 1);
         $combinedResponse->assertJsonPath('pagination.current_page', 1);
@@ -335,6 +368,10 @@ class DoctorAvailabilityCrudTest extends TestCase
         $invalidSearchResponse = $this->getJson('/api/reps/doctors/all?search[]=x');
         $invalidSearchResponse->assertStatus(422);
         $invalidSearchResponse->assertJsonPath('code', 422);
+
+        $invalidSpecialtyNameResponse = $this->getJson('/api/reps/doctors/all?specialty[]=cardio');
+        $invalidSpecialtyNameResponse->assertStatus(422);
+        $invalidSpecialtyNameResponse->assertJsonPath('code', 422);
 
         $invalidPageResponse = $this->getJson('/api/reps/doctors/all?page=0&per_page=0');
         $invalidPageResponse->assertStatus(422);
