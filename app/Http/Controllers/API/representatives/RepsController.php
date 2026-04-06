@@ -78,12 +78,14 @@ class RepsController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'search' => ['nullable', 'string', 'max:255'],
+            'specialty' => ['nullable', 'string', 'max:255'],
             'specialty_id' => ['nullable', 'integer', 'exists:specialties,id'],
             'address_1' => ['nullable', 'string', 'max:255'],
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ], [], [
             'search' => 'Search',
+            'specialty' => 'Specialty',
             'specialty_id' => 'Specialty',
             'address_1' => 'Address',
             'page' => 'Page',
@@ -131,6 +133,16 @@ class RepsController extends Controller
             })
             ->when($request->filled('specialty_id'), function ($query) use ($request) {
                 $query->where('specialty_id', (int) $request->input('specialty_id'));
+            })
+            ->when($request->filled('specialty'), function ($query) use ($request) {
+                $specialty = trim((string) $request->input('specialty'));
+                if ($specialty === '') {
+                    return;
+                }
+
+                $query->whereHas('specialty', function ($specialtyQuery) use ($specialty) {
+                    $specialtyQuery->where('name', 'like', '%' . $specialty . '%');
+                });
             })
             ->when($request->filled('address_1'), function ($query) use ($request) {
                 $address = trim((string) $request->input('address_1'));
