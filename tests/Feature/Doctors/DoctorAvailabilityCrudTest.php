@@ -153,6 +153,9 @@ class DoctorAvailabilityCrudTest extends TestCase
 
         $allDoctorsResponse = $this->getJson('/api/reps/doctors/all');
         $allDoctorsResponse->assertStatus(200);
+        $allDoctorsResponse->assertJsonPath('pagination.current_page', 1);
+        $allDoctorsResponse->assertJsonPath('pagination.per_page', 10);
+        $allDoctorsResponse->assertJsonPath('pagination.total', 1);
         $doctorPayload = collect($allDoctorsResponse->json('data'))
             ->firstWhere('id', $doctor->id);
         $this->assertNotNull($doctorPayload);
@@ -177,6 +180,80 @@ class DoctorAvailabilityCrudTest extends TestCase
         $this->assertCount(1, $specialityPayload['available_times']);
         $this->assertSame('available', $specialityPayload['available_times'][0]['status']);
         $this->assertSame('Monday', $specialityPayload['available_times'][0]['date']);
+    }
+
+    public function test_representative_doctors_all_supports_search_and_pagination(): void
+    {
+        $firstDoctor = $this->createDoctor('rep-all-search-one@example.com', '01111111280');
+        $firstDoctor->update(['name' => 'Doctor Searchable One']);
+        $this->createAvailability($firstDoctor, 'monday', '09:00:00', '10:00:00', 'available');
+
+        $secondDoctor = $this->createDoctor('rep-all-search-two@example.com', '01111111281');
+        $secondDoctor->update(['name' => 'Doctor Searchable Two']);
+        $this->createAvailability($secondDoctor, 'monday', '10:00:00', '11:00:00', 'available');
+
+        $thirdDoctor = $this->createDoctor('rep-all-search-three@example.com', '01111111282');
+        $thirdDoctor->update(['name' => 'Doctor Hidden']);
+        $this->createAvailability($thirdDoctor, 'monday', '11:00:00', '12:00:00', 'available');
+
+        $rep = $this->createRepresentative('rep-all-search@example.com', '01011111180');
+        Sanctum::actingAs($rep, ['representative']);
+
+        $pageOneResponse = $this->getJson('/api/reps/doctors/all?search=Searchable&page=1&per_page=1');
+        $pageOneResponse->assertStatus(200);
+        $pageOneResponse->assertJsonPath('pagination.current_page', 1);
+        $pageOneResponse->assertJsonPath('pagination.per_page', 1);
+        $pageOneResponse->assertJsonPath('pagination.total', 2);
+        $pageOneResponse->assertJsonPath('pagination.last_page', 2);
+        $pageOneResponse->assertJsonCount(1, 'data');
+
+        $pageTwoResponse = $this->getJson('/api/reps/doctors/all?search=Searchable&page=2&per_page=1');
+        $pageTwoResponse->assertStatus(200);
+        $pageTwoResponse->assertJsonPath('pagination.current_page', 2);
+        $pageTwoResponse->assertJsonPath('pagination.per_page', 1);
+        $pageTwoResponse->assertJsonPath('pagination.total', 2);
+        $pageTwoResponse->assertJsonPath('pagination.last_page', 2);
+        $pageTwoResponse->assertJsonCount(1, 'data');
+
+        $pageOneId = (int) $pageOneResponse->json('data.0.id');
+        $pageTwoId = (int) $pageTwoResponse->json('data.0.id');
+        $this->assertNotSame($pageOneId, $pageTwoId);
+        $this->assertTrue(in_array($pageOneId, [$firstDoctor->id, $secondDoctor->id], true));
+        $this->assertTrue(in_array($pageTwoId, [$firstDoctor->id, $secondDoctor->id], true));
+    }
+
+    public function test_representative_doctors_all_returns_empty_with_pagination_when_search_has_no_matches(): void
+    {
+        $doctor = $this->createDoctor('rep-all-empty@example.com', '01111111283');
+        $doctor->update(['name' => 'Doctor Existing']);
+        $this->createAvailability($doctor, 'monday', '09:00:00', '10:00:00', 'available');
+
+        $rep = $this->createRepresentative('rep-all-empty@example.com', '01011111181');
+        Sanctum::actingAs($rep, ['representative']);
+
+        $response = $this->getJson('/api/reps/doctors/all?search=DoesNotExist&page=1&per_page=5');
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('message', 'Doctors Not Found');
+        $response->assertJsonPath('data', []);
+        $response->assertJsonPath('pagination.current_page', 1);
+        $response->assertJsonPath('pagination.per_page', 5);
+        $response->assertJsonPath('pagination.total', 0);
+        $response->assertJsonPath('pagination.last_page', 1);
+    }
+
+    public function test_representative_doctors_all_validates_search_and_pagination_params(): void
+    {
+        $rep = $this->createRepresentative('rep-all-validation@example.com', '01011111182');
+        Sanctum::actingAs($rep, ['representative']);
+
+        $invalidSearchResponse = $this->getJson('/api/reps/doctors/all?search[]=x');
+        $invalidSearchResponse->assertStatus(422);
+        $invalidSearchResponse->assertJsonPath('code', 422);
+
+        $invalidPageResponse = $this->getJson('/api/reps/doctors/all?page=0&per_page=0');
+        $invalidPageResponse->assertStatus(422);
+        $invalidPageResponse->assertJsonPath('code', 422);
     }
 
     public function test_representative_favorite_doctor_endpoints_return_only_available_times(): void
