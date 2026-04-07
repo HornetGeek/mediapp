@@ -144,6 +144,66 @@ class SubscriptionFlowsTest extends TestCase
         $this->assertSame('2027-02-15', Carbon::parse($company->subscription_end)->toDateString());
     }
 
+    public function test_dashboard_store_uses_manual_quota_values_and_computes_subscription_dates(): void
+    {
+        Carbon::setTestNow('2026-01-20 09:00:00');
+
+        $admin = User::factory()->create(['role' => 'super_admin']);
+        $package = Package::create([
+            'name' => 'Semi Annual',
+            'price' => 2200,
+            'duration' => 180,
+            'plan_type' => Package::PLAN_SEMI_ANNUAL,
+            'billing_months' => 6,
+        ]);
+
+        $response = $this
+            ->actingAs($admin)
+            ->post(route('companies.store'), [
+                'name' => 'Manual Quota Co',
+                'package_id' => $package->id,
+                'phone' => '01000000022',
+                'email' => 'manual-quota@example.com',
+                'password' => 'secret123',
+                'visits_per_day' => 17,
+                'num_of_reps' => 9,
+                'status' => 'inactive',
+            ]);
+
+        $response->assertRedirect(route('companies.index'));
+
+        $company = Company::where('email', 'manual-quota@example.com')->firstOrFail();
+        $this->assertSame(17, $company->visits_per_day);
+        $this->assertSame(9, $company->num_of_reps);
+        $this->assertSame('2026-01-20', Carbon::parse($company->subscription_start)->toDateString());
+        $this->assertSame('2026-07-20', Carbon::parse($company->subscription_end)->toDateString());
+    }
+
+    public function test_dashboard_store_rejects_missing_manual_quota_fields(): void
+    {
+        $admin = User::factory()->create(['role' => 'super_admin']);
+        $package = Package::create([
+            'name' => 'Quarterly',
+            'price' => 1200,
+            'duration' => 90,
+            'plan_type' => Package::PLAN_QUARTERLY,
+            'billing_months' => 3,
+        ]);
+
+        $response = $this
+            ->actingAs($admin)
+            ->post(route('companies.store'), [
+                'name' => 'Missing Quotas Co',
+                'package_id' => $package->id,
+                'phone' => '01000000023',
+                'email' => 'missing-quotas@example.com',
+                'password' => 'secret123',
+                'status' => 'active',
+            ]);
+
+        $response->assertSessionHasErrors(['visits_per_day', 'num_of_reps']);
+    }
+
     public function test_dashboard_package_form_rejects_missing_plan_type(): void
     {
         $admin = User::factory()->create(['role' => 'super_admin']);
@@ -200,6 +260,47 @@ class SubscriptionFlowsTest extends TestCase
             'billing_months' => null,
             'duration' => 120,
         ]);
+    }
+
+    public function test_super_admin_api_create_company_rejects_duplicate_email_with_validation_422(): void
+    {
+        $admin = User::factory()->create(['role' => 'super_admin']);
+        Sanctum::actingAs($admin, ['super-admin']);
+
+        $package = Package::create([
+            'name' => 'Quarterly',
+            'price' => 1200,
+            'duration' => 90,
+            'plan_type' => Package::PLAN_QUARTERLY,
+            'billing_months' => 3,
+        ]);
+
+        Company::create([
+            'name' => 'Existing Company',
+            'package_id' => $package->id,
+            'phone' => '01000000024',
+            'email' => 'existing-company@example.com',
+            'password' => Hash::make('secret123'),
+            'visits_per_day' => 10,
+            'num_of_reps' => 3,
+            'subscription_start' => now()->toDateString(),
+            'subscription_end' => now()->addMonthsNoOverflow(3)->toDateString(),
+            'status' => 'active',
+        ]);
+
+        $response = $this->postJson('/api/super-admin/create-company', [
+            'name' => 'New Company',
+            'email' => 'existing-company@example.com',
+            'password' => 'secret123',
+            'phone' => '01000000025',
+            'visits_per_day' => 8,
+            'num_of_reps' => 2,
+            'package_id' => $package->id,
+        ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonPath('code', 422);
+        $response->assertJsonPath('message', 'Validation Error');
     }
 
     public function test_subscription_expiry_command_deactivates_company_and_cancels_appointments(): void
