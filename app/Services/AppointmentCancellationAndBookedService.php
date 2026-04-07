@@ -83,8 +83,6 @@ class AppointmentCancellationAndBookedService
 
         $appointment->update(['status' => 'confirmed']);
 
-        $this->notifyDoctor($appointment, $reps);
-
         return ApiResponse::sendResponse(200, 'Appointment confirmed successfully', new AppointmentsResource($appointment));
     }
 
@@ -129,8 +127,6 @@ class AppointmentCancellationAndBookedService
             'cancelled_by' => null,
         ]);
 
-        $this->notifySuccessDoctor($appointment, $reps);
-
         return ApiResponse::sendResponse(200, 'Change Status successfully', new AppointmentsResource($appointment));
     }
 
@@ -171,20 +167,4 @@ class AppointmentCancellationAndBookedService
         event(new SendNotificationEvent($doctor, 'Visit Cancelled by Rep', $message, 'doctor', [], $dedupeKey));
     }
 
-    private function notifySuccessDoctor($appointment, $reps)
-    {
-        $doctor = $appointment->doctor;
-
-        $date = Carbon::parse($appointment->date->format('Y-m-d') . ' ' . $appointment->start_time->format('g:i A'));
-        $formatted = $date->format('D d, M g:i A');
-
-        $message = 'Visit With ' . $reps->name . ' has been Confirmed by the representative. ' . $formatted;
-        $dedupeKey = sprintf(
-            'appointment:%d:rep_confirmed:to:doctor:%d',
-            (int) $appointment->id,
-            (int) $doctor->id
-        );
-
-        event(new SendNotificationEvent($doctor, 'Visit Confirmed by Rep', $message, 'doctor', [], $dedupeKey));
-    }
 }

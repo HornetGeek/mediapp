@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Doctors;
 
+use App\Events\SendNotificationEvent;
 use App\Models\Appointment;
 use App\Models\Company;
 use App\Models\DoctorAvailability;
@@ -11,6 +12,7 @@ use App\Models\Representative;
 use App\Models\Specialty;
 use Carbon\Carbon;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Schema;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
@@ -897,6 +899,7 @@ class DoctorAppointmentsPhoneTest extends TestCase
             'cancelled_by' => 'system',
         ]);
 
+        Event::fake([SendNotificationEvent::class]);
         Sanctum::actingAs($rep, ['representative']);
 
         $response = $this->putJson('/api/reps/cancel-appointment/' . $appointment->id);
@@ -911,6 +914,7 @@ class DoctorAppointmentsPhoneTest extends TestCase
             'status' => 'deleted',
             'cancelled_by' => 'Reps.' . $rep->name,
         ]);
+        Event::assertDispatched(SendNotificationEvent::class);
     }
 
     public function test_representative_change_status_confirms_suspended_after_end_time_on_same_day_within_48_hours(): void
@@ -930,6 +934,7 @@ class DoctorAppointmentsPhoneTest extends TestCase
             'cancelled_by' => 'system',
         ]);
 
+        Event::fake([SendNotificationEvent::class]);
         Sanctum::actingAs($rep, ['representative']);
 
         $response = $this->putJson('/api/reps/appointment/change-status', [
@@ -946,6 +951,28 @@ class DoctorAppointmentsPhoneTest extends TestCase
             'status' => 'confirmed',
             'cancelled_by' => null,
         ]);
+        Event::assertNotDispatched(SendNotificationEvent::class);
+    }
+
+    public function test_representative_completed_endpoint_confirms_without_dispatching_notification(): void
+    {
+        [, $rep] = $this->seedDoctorAppointmentData('pending');
+        $appointment = Appointment::firstOrFail();
+
+        Event::fake([SendNotificationEvent::class]);
+        Sanctum::actingAs($rep, ['representative']);
+
+        $response = $this->putJson('/api/reps/completed-appointment/' . $appointment->id);
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('data.id', $appointment->id);
+        $response->assertJsonPath('data.status', 'confirmed');
+
+        $this->assertDatabaseHas('appointments', [
+            'id' => $appointment->id,
+            'status' => 'confirmed',
+        ]);
+        Event::assertNotDispatched(SendNotificationEvent::class);
     }
 
     public function test_representative_change_status_confirms_suspended_next_day_within_48_hours(): void
