@@ -179,6 +179,14 @@
             }
         });
         $(document).ready(function() {
+            @if (old('form_context') === 'company_create' && $errors->any())
+                const addModalEl = document.getElementById('addModal');
+                if (addModalEl) {
+                    const addModal = new bootstrap.Modal(addModalEl);
+                    addModal.show();
+                }
+            @endif
+
             $("#status").on('change', function() {
                 
                 let value = $(this).val();

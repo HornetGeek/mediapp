@@ -29,7 +29,7 @@ class CompanyRequest extends FormRequest
         return [
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'email', 'max:255', 'unique:companies,email'],
-            'password' => ['required', 'string', 'min:8'],
+            'password' => ['required', 'string'],
             'phone' => ['required', 'string'],
             'visits_per_day' => ['required', 'integer'],
             'num_of_reps' => ['required', 'integer'],
