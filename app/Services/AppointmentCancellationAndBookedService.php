@@ -102,55 +102,56 @@ class AppointmentCancellationAndBookedService
             return ApiResponse::sendResponse(400, 'Appointment is already confirmed', []);
         }
 
-        $now = Carbon::now();
-        $dateInCairo = $now->setTimezone('Africa/Cairo');
-
-        $appointmentDate = Carbon::parse($appointment->date);
-        $endTime = $appointment->getRawOriginal('end_time');
-
-        $endTimeCarbon = Carbon::parse($endTime);
-
-        $appointmentEnd = $endTimeCarbon->copy()->setDate(
-            $appointmentDate->year,
-            $appointmentDate->month,
-            $appointmentDate->day
-        );
-        // dd($appointment->end_time->format('h:i A l'), $dateInCairo->format("h:i A l"));
-        $diffHours = $now->diffInHours($appointmentDate, false);
-        /*
-        diffInHours($appointmentDate, false)
-        - قيمة موجبة لو الآن بعد الموعد
-        - قيمة سالبة لو الموعد في المستقبل
-        */
-
-        if ($diffHours < -48) {
-            return ApiResponse::sendResponse(403, 'You can\'t change status after 48 hours from the appointment time', []);
+        if ($appointment->status !== 'suspended') {
+            return ApiResponse::sendResponse(409, 'You can only change status for suspended appointments.', []);
         }
 
-        if ($dateInCairo->isSameDay($appointmentDate)) {
-            if ($dateInCairo->greaterThan($appointmentEnd)) {
-                $appointment->update(['status' => 'confirmed']);
-                $this->notifySuccessDoctor($appointment, $reps);
+        $appointmentStartAt = $this->dateTimeFromAppointment($appointment, 'start_time');
+        $appointmentEndAt = $this->dateTimeFromAppointment($appointment, 'end_time');
 
-                return ApiResponse::sendResponse(200, 'Change Status successfully', new AppointmentsResource($appointment));
-            }
-            return ApiResponse::sendResponse(200, 'You can\'t change the status before the appointment end time.', []);
+        if (!$appointmentStartAt || !$appointmentEndAt) {
+            return ApiResponse::sendResponse(422, 'Appointment date or time is invalid.', []);
         }
-        return ApiResponse::sendResponse(409, 'You can\'t change the status before the appointment date.', []);
 
-        // if ($dateInCairo->format('Y-m-d') === $appointmentDate->format('Y-m-d') && $dateInCairo->format("h:i A l") > $appointment->end_time->format('h:i A l')) {
-        //     $appointment->update(['status' => 'confirmed']);
-        //     $this->notifyDoctor($appointment, $reps);
-        //     return ApiResponse::sendResponse(200, 'Change Status successfully', new AppointmentsResource($appointment));
-        // } else {
-        //     return ApiResponse::sendResponse(200, 'You can\'t change the status before the reservation date.', []);
-        // }
+        $now = Carbon::now('Africa/Cairo');
 
+        if (!$now->greaterThan($appointmentEndAt)) {
+            return ApiResponse::sendResponse(409, 'You can\'t change the status before the appointment end time.', []);
+        }
 
+        $deadlineAt = $appointmentStartAt->copy()->addHours(48);
+        if ($now->greaterThan($deadlineAt)) {
+            return ApiResponse::sendResponse(403, 'You can\'t change status after 48 hours from the appointment start time', []);
+        }
 
+        $appointment->update([
+            'status' => 'confirmed',
+            'cancelled_by' => null,
+        ]);
+
+        $this->notifySuccessDoctor($appointment, $reps);
+
+        return ApiResponse::sendResponse(200, 'Change Status successfully', new AppointmentsResource($appointment));
     }
 
+    private function dateTimeFromAppointment(Appointment $appointment, string $timeColumn): ?Carbon
+    {
+        $dateValue = trim((string) $appointment->getRawOriginal('date'));
+        $timeValue = trim((string) $appointment->getRawOriginal($timeColumn));
 
+        if ($dateValue === '' || $timeValue === '') {
+            return null;
+        }
+
+        try {
+            $datePart = Carbon::parse($dateValue, 'Africa/Cairo')->format('Y-m-d');
+            $timePart = Carbon::parse($timeValue, 'Africa/Cairo')->format('H:i:s');
+
+            return Carbon::createFromFormat('Y-m-d H:i:s', $datePart . ' ' . $timePart, 'Africa/Cairo');
+        } catch (\Throwable $exception) {
+            return null;
+        }
+    }
 
     private function notifyDoctor($appointment, $reps)
     {

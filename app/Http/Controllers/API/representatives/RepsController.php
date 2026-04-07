@@ -693,10 +693,27 @@ class RepsController extends Controller
         return ApiResponse::sendResponse(200, 'Not found', []);
     }
 
-    public function changeAppointmentStatus(Request $request, AppointmentCancellationAndBookedService $service)
+    public function changeAppointmentStatus(
+        Request $request,
+        AppointmentCancellationAndBookedService $service,
+        AppointmentStatusRefreshService $statusRefresh
+    )
     {
+        $validator = Validator::make($request->all(), [
+            'appointment_id' => ['required', 'integer'],
+        ], [], [
+            'appointment_id' => 'Appointment',
+        ]);
+
+        if ($validator->fails()) {
+            return ApiResponse::sendResponse(422, $validator->messages()->first(), []);
+        }
+
         $reps = auth()->user();
-        $appointmentId = $request->appointment_id;
+        $this->refreshRepresentativeAppointments($statusRefresh);
+
+        $appointmentId = (int) $request->input('appointment_id');
+
         return $service->changeStatus($appointmentId, $reps);
     }
 
