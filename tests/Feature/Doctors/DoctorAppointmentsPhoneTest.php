@@ -913,6 +913,225 @@ class DoctorAppointmentsPhoneTest extends TestCase
         ]);
     }
 
+    public function test_representative_change_status_confirms_suspended_after_end_time_on_same_day_within_48_hours(): void
+    {
+        [, $rep] = $this->seedDoctorAppointmentData('pending');
+        $appointment = Appointment::firstOrFail();
+
+        $nowInCairo = Carbon::now('Africa/Cairo')->startOfMinute();
+        $startAt = $nowInCairo->copy()->subMinutes(30);
+        $endAt = $startAt->copy()->addMinutes(5);
+
+        $appointment->update([
+            'date' => $startAt->toDateString(),
+            'start_time' => $startAt->format('H:i:s'),
+            'end_time' => $endAt->format('H:i:s'),
+            'status' => 'suspended',
+            'cancelled_by' => 'system',
+        ]);
+
+        Sanctum::actingAs($rep, ['representative']);
+
+        $response = $this->putJson('/api/reps/appointment/change-status', [
+            'appointment_id' => $appointment->id,
+        ]);
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('data.id', $appointment->id);
+        $response->assertJsonPath('data.status', 'confirmed');
+        $response->assertJsonPath('data.cancelled_by', null);
+
+        $this->assertDatabaseHas('appointments', [
+            'id' => $appointment->id,
+            'status' => 'confirmed',
+            'cancelled_by' => null,
+        ]);
+    }
+
+    public function test_representative_change_status_confirms_suspended_next_day_within_48_hours(): void
+    {
+        [, $rep] = $this->seedDoctorAppointmentData('pending');
+        $appointment = Appointment::firstOrFail();
+
+        $nowInCairo = Carbon::now('Africa/Cairo')->startOfMinute();
+        $startAt = $nowInCairo->copy()->subHours(26);
+        $endAt = $startAt->copy()->addMinutes(5);
+
+        $appointment->update([
+            'date' => $startAt->toDateString(),
+            'start_time' => $startAt->format('H:i:s'),
+            'end_time' => $endAt->format('H:i:s'),
+            'status' => 'suspended',
+            'cancelled_by' => 'system',
+        ]);
+
+        Sanctum::actingAs($rep, ['representative']);
+
+        $response = $this->putJson('/api/reps/appointment/change-status', [
+            'appointment_id' => $appointment->id,
+        ]);
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('data.id', $appointment->id);
+        $response->assertJsonPath('data.status', 'confirmed');
+
+        $this->assertDatabaseHas('appointments', [
+            'id' => $appointment->id,
+            'status' => 'confirmed',
+            'cancelled_by' => null,
+        ]);
+    }
+
+    public function test_representative_change_status_rejects_after_48_hours_from_start_time(): void
+    {
+        [, $rep] = $this->seedDoctorAppointmentData('pending');
+        $appointment = Appointment::firstOrFail();
+
+        $nowInCairo = Carbon::now('Africa/Cairo')->startOfMinute();
+        $startAt = $nowInCairo->copy()->subHours(49);
+        $endAt = $startAt->copy()->addMinutes(5);
+
+        $appointment->update([
+            'date' => $startAt->toDateString(),
+            'start_time' => $startAt->format('H:i:s'),
+            'end_time' => $endAt->format('H:i:s'),
+            'status' => 'pending',
+            'cancelled_by' => null,
+        ]);
+
+        Sanctum::actingAs($rep, ['representative']);
+
+        $response = $this->putJson('/api/reps/appointment/change-status', [
+            'appointment_id' => $appointment->id,
+        ]);
+
+        $response->assertStatus(403);
+        $response->assertJsonPath('message', 'You can\'t change status after 48 hours from the appointment start time');
+
+        $this->assertDatabaseHas('appointments', [
+            'id' => $appointment->id,
+            'status' => 'suspended',
+            'cancelled_by' => 'system',
+        ]);
+    }
+
+    public function test_representative_change_status_rejects_before_appointment_end_time(): void
+    {
+        [, $rep] = $this->seedDoctorAppointmentData('pending');
+        $appointment = Appointment::firstOrFail();
+
+        $nowInCairo = Carbon::now('Africa/Cairo')->startOfMinute();
+        $startAt = $nowInCairo->copy()->subMinutes(2);
+        $endAt = $nowInCairo->copy()->addMinutes(3);
+
+        $appointment->update([
+            'date' => $startAt->toDateString(),
+            'start_time' => $startAt->format('H:i:s'),
+            'end_time' => $endAt->format('H:i:s'),
+            'status' => 'suspended',
+            'cancelled_by' => 'system',
+        ]);
+
+        Sanctum::actingAs($rep, ['representative']);
+
+        $response = $this->putJson('/api/reps/appointment/change-status', [
+            'appointment_id' => $appointment->id,
+        ]);
+
+        $response->assertStatus(409);
+        $response->assertJsonPath('message', 'You can\'t change the status before the appointment end time.');
+
+        $this->assertDatabaseHas('appointments', [
+            'id' => $appointment->id,
+            'status' => 'suspended',
+        ]);
+    }
+
+    public function test_representative_change_status_rejects_non_suspended_statuses(): void
+    {
+        [$doctor, $rep] = $this->seedDoctorAppointmentData('pending');
+        Appointment::query()->delete();
+
+        $statusToAppointmentId = [];
+        foreach (['pending', 'cancelled', 'deleted', 'left'] as $index => $status) {
+            $appointment = Appointment::create([
+                'doctors_id' => $doctor->id,
+                'representative_id' => $rep->id,
+                'company_id' => $rep->company_id,
+                'date' => Carbon::now('Africa/Cairo')->addDays(2 + $index)->toDateString(),
+                'start_time' => '10:00:00',
+                'end_time' => '10:05:00',
+                'status' => $status,
+            ]);
+            $statusToAppointmentId[$status] = $appointment->id;
+        }
+
+        Sanctum::actingAs($rep, ['representative']);
+
+        foreach ($statusToAppointmentId as $status => $appointmentId) {
+            $response = $this->putJson('/api/reps/appointment/change-status', [
+                'appointment_id' => $appointmentId,
+            ]);
+
+            $response->assertStatus(409);
+            $response->assertJsonPath('message', 'You can only change status for suspended appointments.');
+
+            $this->assertDatabaseHas('appointments', [
+                'id' => $appointmentId,
+                'status' => $status,
+            ]);
+        }
+    }
+
+    public function test_representative_change_status_validates_appointment_id_input(): void
+    {
+        [, $rep] = $this->seedDoctorAppointmentData('pending');
+        Sanctum::actingAs($rep, ['representative']);
+
+        $missingAppointmentResponse = $this->putJson('/api/reps/appointment/change-status', []);
+        $missingAppointmentResponse->assertStatus(422);
+        $missingAppointmentResponse->assertJsonPath('code', 422);
+
+        $invalidAppointmentResponse = $this->putJson('/api/reps/appointment/change-status', [
+            'appointment_id' => 'not-an-integer',
+        ]);
+        $invalidAppointmentResponse->assertStatus(422);
+        $invalidAppointmentResponse->assertJsonPath('code', 422);
+    }
+
+    public function test_representative_change_status_uses_start_time_anchor_for_48_hour_window_near_midnight(): void
+    {
+        Carbon::setTestNow(Carbon::create(2026, 4, 7, 22, 0, 0, 'Africa/Cairo'));
+
+        try {
+            [, $rep] = $this->seedDoctorAppointmentData('pending');
+            $appointment = Appointment::firstOrFail();
+
+            $startAt = Carbon::create(2026, 4, 5, 23, 30, 0, 'Africa/Cairo');
+            $endAt = $startAt->copy()->addMinutes(5);
+
+            $appointment->update([
+                'date' => $startAt->toDateString(),
+                'start_time' => $startAt->format('H:i:s'),
+                'end_time' => $endAt->format('H:i:s'),
+                'status' => 'suspended',
+                'cancelled_by' => 'system',
+            ]);
+
+            Sanctum::actingAs($rep, ['representative']);
+
+            $response = $this->putJson('/api/reps/appointment/change-status', [
+                'appointment_id' => $appointment->id,
+            ]);
+
+            $response->assertStatus(200);
+            $response->assertJsonPath('data.id', $appointment->id);
+            $response->assertJsonPath('data.status', 'confirmed');
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
     public function test_representative_cannot_cancel_left_appointment(): void
     {
         [, $rep] = $this->seedDoctorAppointmentData('left');
