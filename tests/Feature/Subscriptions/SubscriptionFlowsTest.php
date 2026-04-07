@@ -179,6 +179,36 @@ class SubscriptionFlowsTest extends TestCase
         $this->assertSame('2026-07-20', Carbon::parse($company->subscription_end)->toDateString());
     }
 
+    public function test_dashboard_store_accepts_short_password(): void
+    {
+        $admin = User::factory()->create(['role' => 'super_admin']);
+        $package = Package::create([
+            'name' => 'Quarterly',
+            'price' => 1200,
+            'duration' => 90,
+            'plan_type' => Package::PLAN_QUARTERLY,
+            'billing_months' => 3,
+        ]);
+
+        $response = $this
+            ->actingAs($admin)
+            ->post(route('companies.store'), [
+                'name' => 'Short Password Co',
+                'package_id' => $package->id,
+                'phone' => '01000000026',
+                'email' => 'short-password@example.com',
+                'password' => '1',
+                'visits_per_day' => 6,
+                'num_of_reps' => 2,
+                'status' => 'active',
+            ]);
+
+        $response->assertRedirect(route('companies.index'));
+        $this->assertDatabaseHas('companies', [
+            'email' => 'short-password@example.com',
+        ]);
+    }
+
     public function test_dashboard_store_rejects_missing_manual_quota_fields(): void
     {
         $admin = User::factory()->create(['role' => 'super_admin']);
@@ -202,6 +232,68 @@ class SubscriptionFlowsTest extends TestCase
             ]);
 
         $response->assertSessionHasErrors(['visits_per_day', 'num_of_reps']);
+    }
+
+    public function test_dashboard_store_rejects_missing_package_id(): void
+    {
+        $admin = User::factory()->create(['role' => 'super_admin']);
+
+        $response = $this
+            ->actingAs($admin)
+            ->post(route('companies.store'), [
+                'name' => 'Missing Package Co',
+                'phone' => '01000000027',
+                'email' => 'missing-package@example.com',
+                'password' => '1',
+                'visits_per_day' => 7,
+                'num_of_reps' => 3,
+                'status' => 'active',
+            ]);
+
+        $response->assertSessionHasErrors(['package_id']);
+    }
+
+    public function test_dashboard_update_accepts_short_password_when_provided(): void
+    {
+        $admin = User::factory()->create(['role' => 'super_admin']);
+        $package = Package::create([
+            'name' => 'Quarterly',
+            'price' => 1200,
+            'duration' => 90,
+            'plan_type' => Package::PLAN_QUARTERLY,
+            'billing_months' => 3,
+        ]);
+
+        $company = Company::create([
+            'name' => 'Update Password Co',
+            'package_id' => $package->id,
+            'phone' => '01000000028',
+            'email' => 'update-password@example.com',
+            'password' => Hash::make('original-password'),
+            'visits_per_day' => 10,
+            'num_of_reps' => 3,
+            'subscription_start' => now()->toDateString(),
+            'subscription_end' => now()->addMonthsNoOverflow(3)->toDateString(),
+            'status' => 'active',
+        ]);
+
+        $response = $this
+            ->actingAs($admin)
+            ->put(route('companies.update', $company->id), [
+                'name' => 'Update Password Co',
+                'package_id' => $package->id,
+                'phone' => '01000000028',
+                'email' => 'update-password@example.com',
+                'password' => '1',
+                'visits_per_day' => 10,
+                'num_of_reps' => 3,
+                'status' => 'active',
+            ]);
+
+        $response->assertRedirect(route('companies.index'));
+
+        $company->refresh();
+        $this->assertTrue(Hash::check('1', $company->password));
     }
 
     public function test_dashboard_package_form_rejects_missing_plan_type(): void
@@ -301,6 +393,35 @@ class SubscriptionFlowsTest extends TestCase
         $response->assertStatus(422);
         $response->assertJsonPath('code', 422);
         $response->assertJsonPath('message', 'Validation Error');
+    }
+
+    public function test_super_admin_api_create_company_accepts_short_password(): void
+    {
+        $admin = User::factory()->create(['role' => 'super_admin']);
+        Sanctum::actingAs($admin, ['super-admin']);
+
+        $package = Package::create([
+            'name' => 'Quarterly',
+            'price' => 1200,
+            'duration' => 90,
+            'plan_type' => Package::PLAN_QUARTERLY,
+            'billing_months' => 3,
+        ]);
+
+        $response = $this->postJson('/api/super-admin/create-company', [
+            'name' => 'Short Api Password Co',
+            'email' => 'short-api-password@example.com',
+            'password' => '1',
+            'phone' => '01000000029',
+            'visits_per_day' => 8,
+            'num_of_reps' => 2,
+            'package_id' => $package->id,
+        ]);
+
+        $response->assertStatus(200);
+        $this->assertDatabaseHas('companies', [
+            'email' => 'short-api-password@example.com',
+        ]);
     }
 
     public function test_subscription_expiry_command_deactivates_company_and_cancels_appointments(): void

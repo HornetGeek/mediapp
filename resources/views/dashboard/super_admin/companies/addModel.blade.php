@@ -1,5 +1,6 @@
 <form action="{{ route('companies.store') }}" method="POST">
     @csrf
+    <input type="hidden" name="form_context" value="company_create">
 
 
     <div class="modal fade" id="addModal" data-bs-keyboard="false" tabindex="-1" aria-hidden="true">
@@ -22,11 +23,17 @@
                                 <label class="form-label">Subscription Plan</label>
                                 <select class="form-select @error('package_id') is-invalid @enderror" name="package_id"
                                     required>
-                                    <option>Select Package</option>
+                                    <option value="" disabled {{ old('package_id') ? '' : 'selected' }}>Select Package</option>
                                     @foreach ($packages as $package)
-                                        <option value="{{ $package->id }}">{{ $package->name }} / {{ $package->plan_label }}</option>
+                                        <option value="{{ $package->id }}"
+                                            {{ (string) old('package_id') === (string) $package->id ? 'selected' : '' }}>
+                                            {{ $package->name }} / {{ $package->plan_label }}
+                                        </option>
                                     @endforeach
                                 </select>
+                                @error('package_id')
+                                    <div class="alert alert-danger">{{ $message }}</div>
+                                @enderror
                             </div>
                             <div class="form-group">
                                 <label class="form-label">Company Name</label>
@@ -140,7 +147,7 @@
 
                     <div class="flex-grow-1 text-end">
                         <button type="button" class="btn btn-link-danger" data-bs-dismiss="modal">Cancel</button>
-                        <button type="submit" class="btn btn-primary" data-bs-dismiss="modal">Save</button>
+                        <button type="submit" class="btn btn-primary">Save</button>
                     </div>
                 </div>
 

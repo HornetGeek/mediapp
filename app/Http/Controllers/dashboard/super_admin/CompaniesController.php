@@ -32,7 +32,7 @@ class CompaniesController extends Controller
             'name' => 'required|string|max:255',
             'package_id' => 'required|integer|exists:packages,id',
             'email' => 'required|email|unique:companies,email',
-            'password' => 'required|min:8',
+            'password' => 'required|string',
             'visits_per_day' => 'required|integer',
             'num_of_reps' => 'required|integer',
             'status' => 'nullable|in:active,inactive',
@@ -83,7 +83,7 @@ class CompaniesController extends Controller
             'name' => 'required|string|max:255',
             'package_id' => 'required|integer',
             'email' => 'required|email|unique:companies,email,' . $company->id,
-            'password' => 'nullable|min:8',
+            'password' => 'nullable|string',
         ]);
 
         if ($validated->fails()) {
