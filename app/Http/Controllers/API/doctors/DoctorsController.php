@@ -542,21 +542,39 @@ class DoctorsController extends Controller
 
     public function filterAppointments(Request $request, AppointmentStatusRefreshService $statusRefresh)
     {
-        $doctor = $this->refreshDoctorAppointments($statusRefresh);
+        $validator = Validator::make($request->all(), [
+            'name' => ['nullable', 'string', 'max:255'],
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+        ], [], [
+            'name' => 'Name',
+            'page' => 'Page',
+            'per_page' => 'Per Page',
+        ]);
 
+        if ($validator->fails()) {
+            return ApiResponse::sendResponse(422, $validator->messages()->first(), []);
+        }
+
+        $perPage = (int) $request->input('per_page', 10);
+        $doctor = $this->refreshDoctorAppointments($statusRefresh);
 
         $filters = $request->only(['name']);
 
-        $serached = Appointment::with(['representative', 'company'])
+        $searched = Appointment::with(['representative', 'company'])
             ->where('doctors_id', $doctor)
             ->filter($filters)
-            ->get();
-        // dd($serached);
+            ->orderBy('date', 'asc')
+            ->orderBy('start_time', 'asc')
+            ->paginate($perPage);
 
-        if ($serached->isEmpty()) {
-            return ApiResponse::sendResponse(404, 'No Appointments found', []);
+        $pagination = $this->buildPaginationMeta($searched);
+        $items = FiltersResource::collection($searched->items());
+
+        if ($searched->total() === 0) {
+            return ApiResponse::sendResponse(404, 'No Appointments found', [], $pagination);
         }
-        return ApiResponse::sendResponse(200, 'Appointments fetched successfully', FiltersResource::collection($serached));
+        return ApiResponse::sendResponse(200, 'Appointments fetched successfully', $items, $pagination);
     }
 
     public function deleteAppointment($book_id)
@@ -966,55 +984,103 @@ class DoctorsController extends Controller
         return ApiResponse::sendResponse(200, 'Email feedback fetched successfully', $get_email_feedback);
     }
 
-    public function getCancelledAppointments(AppointmentStatusRefreshService $statusRefresh)
+    public function getCancelledAppointments(Request $request, AppointmentStatusRefreshService $statusRefresh)
     {
+        $validator = Validator::make($request->all(), [
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+        ], [], [
+            'page' => 'Page',
+            'per_page' => 'Per Page',
+        ]);
+
+        if ($validator->fails()) {
+            return ApiResponse::sendResponse(422, $validator->messages()->first(), []);
+        }
+
+        $perPage = (int) $request->input('per_page', 10);
         $doctor = $this->refreshDoctorAppointments($statusRefresh);
-        // dd($doctor);
+
         $appointments = Appointment::with(['representative', 'doctor'])
             ->where('doctors_id', $doctor)
             ->where('status', 'cancelled')
             ->orderBy('date', 'asc')
             ->orderBy('start_time', 'asc')
-            ->get();
-        // dd($appointments);
-        if ($appointments->isNotEmpty()) {
-            return ApiResponse::sendResponse(200, 'Cancelled Appointments fetched successfully', DoctorAppointmentsResource::collection($appointments));
+            ->paginate($perPage);
+
+        $pagination = $this->buildPaginationMeta($appointments);
+        $items = DoctorAppointmentsResource::collection($appointments->items());
+
+        if ($appointments->total() > 0) {
+            return ApiResponse::sendResponse(200, 'Cancelled Appointments fetched successfully', $items, $pagination);
         }
-        return ApiResponse::sendResponse(200, 'Cancelled Appointments Not Found', []);
+        return ApiResponse::sendResponse(200, 'Cancelled Appointments Not Found', [], $pagination);
     }
 
-    public function getPendingAppointments(AppointmentStatusRefreshService $statusRefresh)
+    public function getPendingAppointments(Request $request, AppointmentStatusRefreshService $statusRefresh)
     {
+        $validator = Validator::make($request->all(), [
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+        ], [], [
+            'page' => 'Page',
+            'per_page' => 'Per Page',
+        ]);
+
+        if ($validator->fails()) {
+            return ApiResponse::sendResponse(422, $validator->messages()->first(), []);
+        }
+
+        $perPage = (int) $request->input('per_page', 10);
         $doctor = $this->refreshDoctorAppointments($statusRefresh);
-        // dd($doctor);
+
         $appointments = Appointment::with(['representative', 'doctor'])
             ->where('doctors_id', $doctor)
             ->where('status', 'pending')
             ->orderBy('date', 'asc')
             ->orderBy('start_time', 'asc')
-            ->get();
-        // dd($appointments);
-        if ($appointments->isNotEmpty()) {
-            return ApiResponse::sendResponse(200, 'Pending Appointments fetched successfully', DoctorAppointmentsResource::collection($appointments));
+            ->paginate($perPage);
+
+        $pagination = $this->buildPaginationMeta($appointments);
+        $items = DoctorAppointmentsResource::collection($appointments->items());
+
+        if ($appointments->total() > 0) {
+            return ApiResponse::sendResponse(200, 'Pending Appointments fetched successfully', $items, $pagination);
         }
-        return ApiResponse::sendResponse(200, 'Pending Appointments Not Found', []);
+        return ApiResponse::sendResponse(200, 'Pending Appointments Not Found', [], $pagination);
     }
 
-    public function getConfirmedAppointments(AppointmentStatusRefreshService $statusRefresh)
+    public function getConfirmedAppointments(Request $request, AppointmentStatusRefreshService $statusRefresh)
     {
+        $validator = Validator::make($request->all(), [
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+        ], [], [
+            'page' => 'Page',
+            'per_page' => 'Per Page',
+        ]);
+
+        if ($validator->fails()) {
+            return ApiResponse::sendResponse(422, $validator->messages()->first(), []);
+        }
+
+        $perPage = (int) $request->input('per_page', 10);
         $doctor = $this->refreshDoctorAppointments($statusRefresh);
-        // dd($doctor);
+
         $appointments = Appointment::with(['representative', 'doctor'])
             ->where('doctors_id', $doctor)
             ->where('status', 'confirmed')
             ->orderBy('date', 'asc')
             ->orderBy('start_time', 'asc')
-            ->get();
-        // dd($appointments);
-        if ($appointments->isNotEmpty()) {
-            return ApiResponse::sendResponse(200, 'Confirmed Appointments fetched successfully', DoctorAppointmentsResource::collection($appointments));
+            ->paginate($perPage);
+
+        $pagination = $this->buildPaginationMeta($appointments);
+        $items = DoctorAppointmentsResource::collection($appointments->items());
+
+        if ($appointments->total() > 0) {
+            return ApiResponse::sendResponse(200, 'Confirmed Appointments fetched successfully', $items, $pagination);
         }
-        return ApiResponse::sendResponse(200, 'Confirmed Appointments Not Found', []);
+        return ApiResponse::sendResponse(200, 'Confirmed Appointments Not Found', [], $pagination);
     }
 
     public function searchBlockList(Request $request)

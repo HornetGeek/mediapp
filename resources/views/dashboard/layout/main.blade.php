@@ -75,9 +75,11 @@
     <script src="{{ asset('assets/js/plugins/feather.min.js') }}"></script>
     <script src="{{asset('assets/js/plugins/simple-datatables.js')}}"></script>
     <script>
-        const dataTable = new simpleDatatables.DataTable('#pc-dt-simple', {
-            sortable: false,
-            perPage: 5
+        document.querySelectorAll('table[data-client-datatable="true"]').forEach((table) => {
+            new simpleDatatables.DataTable(table, {
+                sortable: false,
+                perPage: 5
+            });
         });
     </script>
 

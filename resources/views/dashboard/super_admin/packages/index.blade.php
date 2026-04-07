@@ -40,7 +40,7 @@
                         <div class="table-responsive">
                             <div class="datatable-wrapper datatable-loading no-footer searchable fixed-columns">
                                 <div class="datatable-container">
-                                    <table class="table table-hover datatable-table" id="pc-dt-simple">
+                                    <table class="table table-hover datatable-table" id="pc-dt-simple" data-client-datatable="true">
                                         <thead>
                                             <tr>
                                                 {{-- <th></th> --}}

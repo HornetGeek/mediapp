@@ -14,10 +14,11 @@ class VisitsTrackerController extends Controller
 {
     public function visitsTrack()
     {
-        $list_visits  = Appointment::with(['company', 'doctor.specialty', 'representative.company'])
+        $get_data  = Appointment::with(['company', 'doctor.specialty', 'representative.company'])
             ->orderBy('date', 'desc')
-            ->get();
-        $get_data = $list_visits->map(function ($visit) {
+            ->paginate(12);
+
+        $get_data->setCollection($get_data->getCollection()->map(function ($visit) {
             return [
                 'id' => $visit->id,
                 'date' => Carbon::parse($visit->date)->format('Y-m-d'),
@@ -36,9 +37,8 @@ class VisitsTrackerController extends Controller
                     'company_name' => $visit->representative->company->name,
                 ],
             ];
-        });
+        }));
 
-        // dd($get_data);
         return view('dashboard.super_admin.visits_tracker.index', compact('get_data'));
     }
 

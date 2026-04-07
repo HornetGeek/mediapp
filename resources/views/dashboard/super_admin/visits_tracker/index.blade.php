@@ -95,6 +95,11 @@
 
             <!-- [ sample-page ] end -->
         </div>
+        @isset($get_data)
+            <div class="mt-3 d-flex justify-content-center">
+                {{ $get_data->links() }}
+            </div>
+        @endisset
         <!-- [ Main Content ] end -->
     </div>
 @endsection

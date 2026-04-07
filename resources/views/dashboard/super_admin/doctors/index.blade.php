@@ -41,7 +41,7 @@
                         <div class="table-responsive">
                             <div class="datatable-wrapper datatable-loading no-footer searchable fixed-columns">
                                 <div class="datatable-container">
-                                    <table class="table table-hover datatable-table" id="pc-dt-simple">
+                                    <table class="table table-hover datatable-table" id="doctors-table">
                                         <thead>
                                             <tr>
                                                 {{-- <th></th> --}}
@@ -55,9 +55,6 @@
                                         </thead>
                                         <tbody>
                                             @isset($doctors)
-                                            @php
-                                                    $i = 1;
-                                                @endphp
                                                 @forelse ($doctors as $doctor)
                                                 
                                                     <tr data-index="4">
@@ -66,7 +63,7 @@
                                                                 <input class="form-check-input" type="checkbox">
                                                             </div>
                                                         </td> --}}
-                                                        <td>{{$i++}}</td>
+                                                        <td>{{ $doctors->firstItem() + $loop->index }}</td>
                                                         <td>
                                                             <div class="row">
                                                                 {{-- <div class="col-auto pe-0">
@@ -131,6 +128,9 @@
                                     </nav>
                                 </div> --}}
                             </div>
+                        </div>
+                        <div class="mt-3">
+                            {{ $doctors->links() }}
                         </div>
                     </div>
                 </div>

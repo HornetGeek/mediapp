@@ -15,32 +15,76 @@ use Maatwebsite\Excel\Facades\Excel;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Validator;
 
 class VisitTrackingController extends Controller
 {
-    public function VisitsTrack()
+    public function VisitsTrack(Request $request)
     {
+        $validator = Validator::make($request->all(), [
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+        ], [], [
+            'page' => 'Page',
+            'per_page' => 'Per Page',
+        ]);
+
+        if ($validator->fails()) {
+            return ApiResponse::sendResponse(422, $validator->messages()->first(), []);
+        }
+
+        $perPage = (int) $request->input('per_page', 10);
         $list_visits  = Appointment::with(['company', 'doctor.specialty', 'representative.company'])->where('status', 'confirmed')
             ->orderBy('date', 'desc')
-            ->get();
+            ->paginate($perPage);
 
-        if ($list_visits->isEmpty()) {
-            return ApiResponse::sendResponse(404, 'No Visits Found', []);
+        $pagination = $this->buildPaginationMeta($list_visits);
+        $items = VisitTrackingResource::collection($list_visits->items());
+
+        if ($list_visits->total() === 0) {
+            return ApiResponse::sendResponse(404, 'No Visits Found', [], $pagination);
         }
-        return ApiResponse::sendResponse(200, 'Visits Retrieved Successfully', VisitTrackingResource::collection($list_visits));
+        return ApiResponse::sendResponse(200, 'Visits Retrieved Successfully', $items, $pagination);
     }
 
     public function filterVisits(Request $request)
     {
-        $filters = $request->only(['doctor_name', 'company_name', 'from_date', 'to_date']);
+        $validator = Validator::make($request->all(), [
+            'doctor_name' => ['nullable', 'string', 'max:255'],
+            'company_name' => ['nullable', 'string', 'max:255'],
+            'from_date' => ['nullable', 'date_format:Y-m-d'],
+            'to_date' => ['nullable', 'date_format:Y-m-d'],
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+        ], [], [
+            'doctor_name' => 'Doctor',
+            'company_name' => 'Company',
+            'from_date' => 'From Date',
+            'to_date' => 'To Date',
+            'page' => 'Page',
+            'per_page' => 'Per Page',
+        ]);
 
-        $query = Appointment::advancedFilter($filters)->get();
-
-        if ($query->isEmpty()) {
-            return ApiResponse::sendResponse(200, 'No Visits Found with the given filters', []);
+        if ($validator->fails()) {
+            return ApiResponse::sendResponse(422, $validator->messages()->first(), []);
         }
 
-        return ApiResponse::sendResponse(200, 'Filtered Visits Retrieved Successfully', VisitTrackingResource::collection($query));
+        $filters = $request->only(['doctor_name', 'company_name', 'from_date', 'to_date']);
+        $perPage = (int) $request->input('per_page', 10);
+
+        $query = Appointment::with(['company', 'doctor.specialty', 'representative.company'])
+            ->advancedFilter($filters)
+            ->orderBy('date', 'desc')
+            ->paginate($perPage);
+
+        $pagination = $this->buildPaginationMeta($query);
+        $items = VisitTrackingResource::collection($query->items());
+
+        if ($query->total() === 0) {
+            return ApiResponse::sendResponse(200, 'No Visits Found with the given filters', [], $pagination);
+        }
+
+        return ApiResponse::sendResponse(200, 'Filtered Visits Retrieved Successfully', $items, $pagination);
     }
 
     public function generateVisitsReportCSV($bookId)
@@ -212,5 +256,18 @@ class VisitTrackingController extends Controller
             ->whereMonth('date', $month->month)
             ->whereYear('date', $month->year)
             ->get();
+    }
+
+    private function buildPaginationMeta($paginator): array
+    {
+        return [
+            'current_page' => $paginator->currentPage(),
+            'per_page' => $paginator->perPage(),
+            'total' => $paginator->total(),
+            'last_page' => $paginator->lastPage(),
+            'from' => $paginator->firstItem(),
+            'to' => $paginator->lastItem(),
+            'has_more_pages' => $paginator->hasMorePages(),
+        ];
     }
 }

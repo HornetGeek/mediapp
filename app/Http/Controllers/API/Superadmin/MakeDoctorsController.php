@@ -18,13 +18,30 @@ use Illuminate\Support\Facades\Validator;
 class MakeDoctorsController extends Controller
 {
 
-    public function getDoctors()
+    public function getDoctors(Request $request)
     {
-        $doctors = Doctors::with(['specialty', 'availableTimes'])->get();
-        if ($doctors->isEmpty()) {
-            return ApiResponse::sendResponse(404, 'No Doctors Found', []);
+        $validator = Validator::make($request->all(), [
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+        ], [], [
+            'page' => 'Page',
+            'per_page' => 'Per Page',
+        ]);
+
+        if ($validator->fails()) {
+            return ApiResponse::sendResponse(422, $validator->messages()->first(), []);
         }
-        return ApiResponse::sendResponse(200, 'Doctors Retrieved Successfully', ListDoctorsResource::collection($doctors));
+
+        $perPage = (int) $request->input('per_page', 10);
+        $doctors = Doctors::with(['specialty', 'availableTimes'])->paginate($perPage);
+        $pagination = $this->buildPaginationMeta($doctors);
+        $items = ListDoctorsResource::collection($doctors->items());
+
+        if ($doctors->total() === 0) {
+            return ApiResponse::sendResponse(404, 'No Doctors Found', [], $pagination);
+        }
+
+        return ApiResponse::sendResponse(200, 'Doctors Retrieved Successfully', $items, $pagination);
     }
 
     public function createDoctor(DoctorsRequest $request)
@@ -117,5 +134,18 @@ class MakeDoctorsController extends Controller
         $doctor->delete();
         
         return ApiResponse::sendResponse(200, 'Doctor Deleted Successfully', []);
+    }
+
+    private function buildPaginationMeta($paginator): array
+    {
+        return [
+            'current_page' => $paginator->currentPage(),
+            'per_page' => $paginator->perPage(),
+            'total' => $paginator->total(),
+            'last_page' => $paginator->lastPage(),
+            'from' => $paginator->firstItem(),
+            'to' => $paginator->lastItem(),
+            'has_more_pages' => $paginator->hasMorePages(),
+        ];
     }
 }
