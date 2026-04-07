@@ -30,9 +30,12 @@ class CompaniesController extends Controller
     {
         $validated = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
-            'package_id' => 'required|integer',
+            'package_id' => 'required|integer|exists:packages,id',
             'email' => 'required|email|unique:companies,email',
             'password' => 'required|min:8',
+            'visits_per_day' => 'required|integer',
+            'num_of_reps' => 'required|integer',
+            'status' => 'nullable|in:active,inactive',
 
         ]);
 
@@ -55,8 +58,8 @@ class CompaniesController extends Controller
                 'phone' => $request->phone,
                 'email' => $request->email,
                 'password' => Hash::make($request->password),
-                'visits_per_day' => $package->visits_per_day,
-                'num_of_reps' => $package->num_of_reps,
+                'visits_per_day' => $request->visits_per_day,
+                'num_of_reps' => $request->num_of_reps,
                 'status' => $request->status ?? 'active',
 
             ]);
