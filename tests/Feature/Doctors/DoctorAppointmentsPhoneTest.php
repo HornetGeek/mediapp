@@ -558,6 +558,73 @@ class DoctorAppointmentsPhoneTest extends TestCase
         );
     }
 
+    public function test_reps_booked_appointments_endpoint_supports_date_and_specialty_filters(): void
+    {
+        [, $rep] = $this->seedDoctorAppointmentData('pending');
+
+        $matchedSpecialty = Specialty::create(['name' => 'Internal Medicine']);
+        $otherSpecialty = Specialty::create(['name' => 'Orthopedics']);
+        $targetDate = Carbon::now('Africa/Cairo')->addDays(6)->toDateString();
+
+        $matchedDoctor = Doctors::create([
+            'name' => 'Doctor Date Specialty Match',
+            'email' => 'doctor-date-specialty-match@example.com',
+            'phone' => '01111111128',
+            'password' => 'secret123',
+            'specialty_id' => $matchedSpecialty->id,
+            'status' => 'active',
+        ]);
+
+        $matchedAppointment = Appointment::create([
+            'doctors_id' => $matchedDoctor->id,
+            'representative_id' => $rep->id,
+            'company_id' => $rep->company_id,
+            'date' => $targetDate,
+            'start_time' => '09:00:00',
+            'end_time' => '09:05:00',
+            'status' => 'confirmed',
+        ]);
+
+        $otherSpecialtyDoctor = Doctors::create([
+            'name' => 'Doctor Same Date Different Specialty',
+            'email' => 'doctor-same-date-other-specialty@example.com',
+            'phone' => '01111111129',
+            'password' => 'secret123',
+            'specialty_id' => $otherSpecialty->id,
+            'status' => 'active',
+        ]);
+
+        Appointment::create([
+            'doctors_id' => $otherSpecialtyDoctor->id,
+            'representative_id' => $rep->id,
+            'company_id' => $rep->company_id,
+            'date' => $targetDate,
+            'start_time' => '10:00:00',
+            'end_time' => '10:05:00',
+            'status' => 'confirmed',
+        ]);
+
+        Appointment::create([
+            'doctors_id' => $matchedDoctor->id,
+            'representative_id' => $rep->id,
+            'company_id' => $rep->company_id,
+            'date' => Carbon::now('Africa/Cairo')->addDays(7)->toDateString(),
+            'start_time' => '11:00:00',
+            'end_time' => '11:05:00',
+            'status' => 'confirmed',
+        ]);
+
+        Sanctum::actingAs($rep, ['representative']);
+
+        $response = $this->getJson('/api/reps/booked/appointments?date=' . $targetDate . '&specialty=Internal&page=1&per_page=10');
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('pagination.total', 1);
+        $response->assertJsonPath('data.0.id', $matchedAppointment->id);
+        $response->assertJsonPath('data.0.date', $targetDate);
+        $response->assertJsonPath('data.0.doctor.specialty.name', 'Internal Medicine');
+    }
+
     public function test_reps_booked_appointments_endpoint_combines_status_search_and_pagination(): void
     {
         [$doctor, $rep] = $this->seedDoctorAppointmentData('pending');
@@ -617,6 +684,88 @@ class DoctorAppointmentsPhoneTest extends TestCase
         $response->assertStringContainsString('Matched Doctor', (string) data_get($response->json('data.0'), 'doctor.name'));
     }
 
+    public function test_reps_booked_appointments_endpoint_combines_status_search_date_specialty_and_pagination(): void
+    {
+        [, $rep] = $this->seedDoctorAppointmentData('pending');
+        $matchedSpecialty = Specialty::create(['name' => 'Matched Specialty']);
+        $otherSpecialty = Specialty::create(['name' => 'Other Specialty']);
+        $targetDate = Carbon::now('Africa/Cairo')->addDays(8)->toDateString();
+
+        foreach ([1, 2, 3] as $offset) {
+            $matchedDoctor = Doctors::create([
+                'name' => 'Matched Doctor ' . $offset,
+                'email' => 'rep-date-specialty-matched-' . $offset . '@example.com',
+                'phone' => '0111111114' . $offset,
+                'password' => 'secret123',
+                'specialty_id' => $matchedSpecialty->id,
+                'status' => 'active',
+            ]);
+
+            Appointment::create([
+                'doctors_id' => $matchedDoctor->id,
+                'representative_id' => $rep->id,
+                'company_id' => $rep->company_id,
+                'date' => $targetDate,
+                'start_time' => sprintf('18:0%d:00', $offset),
+                'end_time' => sprintf('18:0%d:00', $offset + 1),
+                'status' => 'confirmed',
+            ]);
+        }
+
+        $otherDoctor = Doctors::create([
+            'name' => 'Other Doctor',
+            'email' => 'rep-date-specialty-other-doctor@example.com',
+            'phone' => '01111111146',
+            'password' => 'secret123',
+            'specialty_id' => $matchedSpecialty->id,
+            'status' => 'active',
+        ]);
+
+        Appointment::create([
+            'doctors_id' => $otherDoctor->id,
+            'representative_id' => $rep->id,
+            'company_id' => $rep->company_id,
+            'date' => $targetDate,
+            'start_time' => '19:00:00',
+            'end_time' => '19:05:00',
+            'status' => 'confirmed',
+        ]);
+
+        $wrongSpecialtyDoctor = Doctors::create([
+            'name' => 'Matched Doctor Wrong Specialty',
+            'email' => 'rep-date-specialty-wrong-specialty@example.com',
+            'phone' => '01111111147',
+            'password' => 'secret123',
+            'specialty_id' => $otherSpecialty->id,
+            'status' => 'active',
+        ]);
+
+        Appointment::create([
+            'doctors_id' => $wrongSpecialtyDoctor->id,
+            'representative_id' => $rep->id,
+            'company_id' => $rep->company_id,
+            'date' => $targetDate,
+            'start_time' => '20:00:00',
+            'end_time' => '20:05:00',
+            'status' => 'confirmed',
+        ]);
+
+        Sanctum::actingAs($rep, ['representative']);
+
+        $response = $this->getJson('/api/reps/booked/appointments?status=confirmed&search=Matched&date=' . $targetDate . '&specialty=Matched%20Specialty&per_page=2&page=2');
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('pagination.current_page', 2);
+        $response->assertJsonPath('pagination.per_page', 2);
+        $response->assertJsonPath('pagination.total', 3);
+        $response->assertJsonPath('pagination.last_page', 2);
+        $response->assertJsonCount(1, 'data');
+        $response->assertJsonPath('data.0.status', 'confirmed');
+        $response->assertStringContainsString('Matched Doctor', (string) data_get($response->json('data.0'), 'doctor.name'));
+        $response->assertJsonPath('data.0.doctor.specialty.name', 'Matched Specialty');
+        $response->assertJsonPath('data.0.date', $targetDate);
+    }
+
     public function test_reps_booked_appointments_endpoint_returns_not_found_with_pagination_when_filter_is_empty(): void
     {
         [, $rep] = $this->seedDoctorAppointmentData('pending');
@@ -665,6 +814,14 @@ class DoctorAppointmentsPhoneTest extends TestCase
         $repResponse = $this->getJson('/api/reps/booked/appointments?search[]=invalid');
         $repResponse->assertStatus(422);
         $repResponse->assertJsonPath('code', 422);
+
+        $repInvalidDateResponse = $this->getJson('/api/reps/booked/appointments?date=2026-13-40');
+        $repInvalidDateResponse->assertStatus(422);
+        $repInvalidDateResponse->assertJsonPath('code', 422);
+
+        $repInvalidSpecialtyResponse = $this->getJson('/api/reps/booked/appointments?specialty[]=invalid');
+        $repInvalidSpecialtyResponse->assertStatus(422);
+        $repInvalidSpecialtyResponse->assertJsonPath('code', 422);
     }
 
     public function test_doctor_appointments_refreshes_suspended_to_left_without_cron(): void

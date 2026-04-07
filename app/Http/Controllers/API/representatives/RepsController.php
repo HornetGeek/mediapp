@@ -503,11 +503,15 @@ class RepsController extends Controller
         $validator = Validator::make($request->all(), [
             'status' => ['nullable', 'in:cancelled,confirmed,pending,left,suspended,deleted'],
             'search' => ['nullable', 'string', 'max:255'],
+            'date' => ['nullable', 'date_format:Y-m-d'],
+            'specialty' => ['nullable', 'string', 'max:255'],
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ], [], [
             'status' => 'Status',
             'search' => 'Search',
+            'date' => 'Date',
+            'specialty' => 'Specialty',
             'page' => 'Page',
             'per_page' => 'Per Page',
         ]);
@@ -523,6 +527,20 @@ class RepsController extends Controller
             ->where('representative_id', $rep)
             ->when($request->filled('status'), function ($query) use ($request) {
                 $query->where('status', $request->status);
+            })
+            ->when($request->filled('date'), function ($query) use ($request) {
+                $query->whereDate('date', $request->input('date'));
+            })
+            ->when($request->filled('specialty'), function ($query) use ($request) {
+                $specialty = trim((string) $request->input('specialty'));
+
+                if ($specialty === '') {
+                    return;
+                }
+
+                $query->whereHas('doctor.specialty', function ($specialtyQuery) use ($specialty) {
+                    $specialtyQuery->where('name', 'like', '%' . $specialty . '%');
+                });
             })
             ->when($request->filled('search'), function ($query) use ($request) {
                 $search = trim((string) $request->input('search'));
