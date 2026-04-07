@@ -10,6 +10,7 @@ use App\Models\Doctors;
 use App\Models\Package;
 use App\Models\Representative;
 use App\Models\Specialty;
+use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Event;
@@ -349,6 +350,287 @@ class DoctorAppointmentsPhoneTest extends TestCase
             ->getJson('/api/reps/booked/appointments');
         $repsResponse->assertStatus(200);
         $repsResponse->assertJsonPath('data.0.phone', $doctor->phone);
+    }
+
+    public function test_doctor_cancelled_appointments_endpoint_supports_pagination_metadata(): void
+    {
+        [$doctor, $rep] = $this->seedDoctorAppointmentData('cancelled');
+
+        Appointment::create([
+            'doctors_id' => $doctor->id,
+            'representative_id' => $rep->id,
+            'company_id' => $rep->company_id,
+            'date' => Carbon::now('Africa/Cairo')->addDays(2)->toDateString(),
+            'start_time' => '12:00:00',
+            'end_time' => '12:05:00',
+            'status' => 'cancelled',
+        ]);
+
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $response = $this->getJson('/api/doctor/appointments/cancelled?per_page=1&page=1');
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('pagination.current_page', 1);
+        $response->assertJsonPath('pagination.per_page', 1);
+        $response->assertJsonPath('pagination.total', 2);
+        $response->assertJsonPath('pagination.last_page', 2);
+        $response->assertJsonCount(1, 'data');
+    }
+
+    public function test_representative_appointments_by_status_endpoint_supports_pagination_metadata(): void
+    {
+        [$doctor, $rep] = $this->seedDoctorAppointmentData('pending');
+
+        Appointment::create([
+            'doctors_id' => $doctor->id,
+            'representative_id' => $rep->id,
+            'company_id' => $rep->company_id,
+            'date' => Carbon::now('Africa/Cairo')->addDays(2)->toDateString(),
+            'start_time' => '13:00:00',
+            'end_time' => '13:05:00',
+            'status' => 'pending',
+        ]);
+
+        Sanctum::actingAs($rep, ['representative']);
+
+        $response = $this->getJson('/api/reps/appointments/by-status?status=pending&per_page=1&page=2');
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('pagination.current_page', 2);
+        $response->assertJsonPath('pagination.per_page', 1);
+        $response->assertJsonPath('pagination.total', 2);
+        $response->assertJsonPath('pagination.last_page', 2);
+        $response->assertJsonCount(1, 'data');
+    }
+
+    public function test_representative_doctors_by_speciality_endpoint_supports_pagination_metadata(): void
+    {
+        [$doctor, $rep] = $this->seedDoctorAppointmentData('pending');
+
+        Doctors::create([
+            'name' => 'Doctor Pagination',
+            'email' => 'doctor-pagination@example.com',
+            'phone' => '01111111198',
+            'password' => 'secret123',
+            'specialty_id' => $doctor->specialty_id,
+            'status' => 'active',
+        ]);
+
+        Sanctum::actingAs($rep, ['representative']);
+
+        $response = $this->getJson('/api/reps/doctorsBySpeciality?specialty_id=' . $doctor->specialty_id . '&per_page=1&page=1');
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('pagination.current_page', 1);
+        $response->assertJsonPath('pagination.per_page', 1);
+        $response->assertJsonPath('pagination.total', 2);
+        $response->assertJsonPath('pagination.last_page', 2);
+        $response->assertJsonCount(1, 'data');
+    }
+
+    public function test_doctor_status_endpoints_validate_pagination_values(): void
+    {
+        [$doctor] = $this->seedDoctorAppointmentData('pending');
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        foreach ([
+            '/api/doctor/filter-appointment/reps',
+            '/api/doctor/appointments/cancelled',
+            '/api/doctor/appointments/pending',
+            '/api/doctor/appointments/confirmed',
+        ] as $endpoint) {
+            $invalidPageResponse = $this->getJson($endpoint . '?page=0');
+            $invalidPageResponse->assertStatus(422);
+            $invalidPageResponse->assertJsonPath('code', 422);
+
+            $invalidPerPageResponse = $this->getJson($endpoint . '?per_page=101');
+            $invalidPerPageResponse->assertStatus(422);
+            $invalidPerPageResponse->assertJsonPath('code', 422);
+        }
+    }
+
+    public function test_representative_status_endpoints_validate_pagination_values(): void
+    {
+        [, $rep] = $this->seedDoctorAppointmentData('pending');
+        Sanctum::actingAs($rep, ['representative']);
+
+        foreach ([
+            '/api/reps/appointments/by-status',
+            '/api/reps/appointments/cancelled',
+            '/api/reps/appointments/pending',
+            '/api/reps/appointments/confirmed',
+            '/api/reps/appointments/lefting',
+            '/api/reps/appointments/suspended',
+            '/api/reps/appointments/filtration',
+        ] as $endpoint) {
+            $invalidPageResponse = $this->getJson($endpoint . '?page=0');
+            $invalidPageResponse->assertStatus(422);
+            $invalidPageResponse->assertJsonPath('code', 422);
+
+            $invalidPerPageResponse = $this->getJson($endpoint . '?per_page=0');
+            $invalidPerPageResponse->assertStatus(422);
+            $invalidPerPageResponse->assertJsonPath('code', 422);
+        }
+    }
+
+    public function test_representative_status_endpoints_support_pagination_metadata_for_each_status(): void
+    {
+        [$doctor, $rep] = $this->seedDoctorAppointmentData('pending');
+        Appointment::query()->delete();
+
+        $statusEndpoints = [
+            'cancelled' => '/api/reps/appointments/cancelled',
+            'pending' => '/api/reps/appointments/pending',
+            'confirmed' => '/api/reps/appointments/confirmed',
+            'left' => '/api/reps/appointments/lefting',
+            'suspended' => '/api/reps/appointments/suspended',
+        ];
+
+        $baseDate = Carbon::now('Africa/Cairo')->addDays(3);
+        foreach (array_keys($statusEndpoints) as $statusIndex => $status) {
+            for ($offset = 0; $offset < 2; $offset++) {
+                $startAt = $baseDate->copy()->addDays($statusIndex)->setTime(9 + $offset, 0, 0);
+                $endAt = $startAt->copy()->addMinutes(5);
+
+                Appointment::create([
+                    'doctors_id' => $doctor->id,
+                    'representative_id' => $rep->id,
+                    'company_id' => $rep->company_id,
+                    'date' => $startAt->toDateString(),
+                    'start_time' => $startAt->format('H:i:s'),
+                    'end_time' => $endAt->format('H:i:s'),
+                    'status' => $status,
+                ]);
+            }
+        }
+
+        Sanctum::actingAs($rep, ['representative']);
+
+        foreach ($statusEndpoints as $status => $endpoint) {
+            $response = $this->getJson($endpoint . '?per_page=1&page=2');
+
+            $response->assertStatus(200);
+            $response->assertJsonPath('pagination.current_page', 2);
+            $response->assertJsonPath('pagination.per_page', 1);
+            $response->assertJsonPath('pagination.total', 2);
+            $response->assertJsonPath('pagination.last_page', 2);
+            $response->assertJsonCount(1, 'data');
+            $response->assertJsonPath('data.0.status', $status);
+        }
+
+        $byStatusResponse = $this->getJson('/api/reps/appointments/by-status?status=confirmed&per_page=1&page=2');
+        $byStatusResponse->assertStatus(200);
+        $byStatusResponse->assertJsonPath('pagination.current_page', 2);
+        $byStatusResponse->assertJsonPath('pagination.per_page', 1);
+        $byStatusResponse->assertJsonPath('pagination.total', 2);
+        $byStatusResponse->assertJsonPath('pagination.last_page', 2);
+        $byStatusResponse->assertJsonCount(1, 'data');
+        $byStatusResponse->assertJsonPath('data.0.status', 'confirmed');
+    }
+
+    public function test_representative_filter_appointments_endpoint_supports_pagination_metadata(): void
+    {
+        [$doctor, $rep] = $this->seedDoctorAppointmentData('pending');
+        Appointment::query()->delete();
+
+        foreach ([11, 12] as $hour) {
+            Appointment::create([
+                'doctors_id' => $doctor->id,
+                'representative_id' => $rep->id,
+                'company_id' => $rep->company_id,
+                'date' => Carbon::now('Africa/Cairo')->addDays(5)->toDateString(),
+                'start_time' => sprintf('%02d:00:00', $hour),
+                'end_time' => sprintf('%02d:05:00', $hour),
+                'status' => 'pending',
+            ]);
+        }
+
+        Sanctum::actingAs($rep, ['representative']);
+
+        $response = $this->getJson('/api/reps/appointments/filtration?per_page=1&page=2');
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('pagination.current_page', 2);
+        $response->assertJsonPath('pagination.per_page', 1);
+        $response->assertJsonPath('pagination.total', 2);
+        $response->assertJsonPath('pagination.last_page', 2);
+        $response->assertJsonCount(1, 'data');
+    }
+
+    public function test_super_admin_doctors_endpoint_supports_pagination_and_validation(): void
+    {
+        [$doctor] = $this->seedDoctorAppointmentData('pending');
+
+        $extraDoctor = Doctors::create([
+            'name' => 'Doctor Super Admin Pagination',
+            'email' => 'doctor-super-admin-pagination@example.com',
+            'phone' => '01111111197',
+            'password' => 'secret123',
+            'specialty_id' => $doctor->specialty_id,
+            'status' => 'active',
+        ]);
+        $this->createFullWeekAvailability($extraDoctor);
+
+        $superAdmin = $this->createSuperAdminUser();
+        Sanctum::actingAs($superAdmin, ['super-admin']);
+
+        $response = $this->getJson('/api/super-admin/doctors?per_page=1&page=2');
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('pagination.current_page', 2);
+        $response->assertJsonPath('pagination.per_page', 1);
+        $response->assertJsonPath('pagination.total', 2);
+        $response->assertJsonPath('pagination.last_page', 2);
+        $response->assertJsonCount(1, 'data');
+
+        $invalidPageResponse = $this->getJson('/api/super-admin/doctors?page=0');
+        $invalidPageResponse->assertStatus(422);
+        $invalidPageResponse->assertJsonPath('code', 422);
+
+        $invalidPerPageResponse = $this->getJson('/api/super-admin/doctors?per_page=101');
+        $invalidPerPageResponse->assertStatus(422);
+        $invalidPerPageResponse->assertJsonPath('code', 422);
+    }
+
+    public function test_super_admin_visits_track_endpoints_support_pagination_and_validation(): void
+    {
+        [$doctor, $rep] = $this->seedDoctorAppointmentData('confirmed');
+
+        Appointment::create([
+            'doctors_id' => $doctor->id,
+            'representative_id' => $rep->id,
+            'company_id' => $rep->company_id,
+            'date' => Carbon::now('Africa/Cairo')->addDays(2)->toDateString(),
+            'start_time' => '12:00:00',
+            'end_time' => '12:05:00',
+            'status' => 'confirmed',
+        ]);
+
+        $superAdmin = $this->createSuperAdminUser();
+        Sanctum::actingAs($superAdmin, ['super-admin']);
+
+        $listResponse = $this->getJson('/api/super-admin/visits-track?per_page=1&page=2');
+        $listResponse->assertStatus(200);
+        $listResponse->assertJsonPath('pagination.current_page', 2);
+        $listResponse->assertJsonPath('pagination.per_page', 1);
+        $listResponse->assertJsonPath('pagination.total', 2);
+        $listResponse->assertJsonPath('pagination.last_page', 2);
+        $listResponse->assertJsonCount(1, 'data');
+
+        $filterResponse = $this->getJson('/api/super-admin/visits-track/filter?doctor_name=Doctor&per_page=1&page=1');
+        $filterResponse->assertStatus(200);
+        $filterResponse->assertJsonPath('pagination.current_page', 1);
+        $filterResponse->assertJsonPath('pagination.per_page', 1);
+        $this->assertGreaterThanOrEqual(1, (int) $filterResponse->json('pagination.total'));
+
+        $invalidListPagination = $this->getJson('/api/super-admin/visits-track?page=0');
+        $invalidListPagination->assertStatus(422);
+        $invalidListPagination->assertJsonPath('code', 422);
+
+        $invalidFilterPagination = $this->getJson('/api/super-admin/visits-track/filter?per_page=0');
+        $invalidFilterPagination->assertStatus(422);
+        $invalidFilterPagination->assertJsonPath('code', 422);
     }
 
     public function test_reps_booked_appointments_refreshes_pending_to_suspended_without_cron(): void
@@ -1680,6 +1962,17 @@ class DoctorAppointmentsPhoneTest extends TestCase
         return [$doctor, $rep];
     }
 
+    private function createSuperAdminUser(): User
+    {
+        return User::create([
+            'name' => 'Super Admin',
+            'email' => 'super-admin-' . uniqid('', true) . '@example.com',
+            'password' => 'secret123',
+            'role' => 'super_admin',
+            'status' => 'active',
+        ]);
+    }
+
     private function createAvailability(
         Doctors $doctor,
         string $date,
@@ -1709,6 +2002,8 @@ class DoctorAppointmentsPhoneTest extends TestCase
     {
         foreach ([
             'personal_access_tokens',
+            'users',
+            'doctor_representative_favorite',
             'line_representative',
             'area_representative',
             'lines',
@@ -1724,6 +2019,19 @@ class DoctorAppointmentsPhoneTest extends TestCase
         ] as $table) {
             Schema::dropIfExists($table);
         }
+
+        Schema::create('users', function (Blueprint $table) {
+            $table->id();
+            $table->string('name');
+            $table->string('email')->unique();
+            $table->timestamp('email_verified_at')->nullable();
+            $table->string('password');
+            $table->string('role')->nullable();
+            $table->string('email_feedback')->nullable();
+            $table->enum('status', ['active', 'inactive'])->default('active');
+            $table->rememberToken();
+            $table->timestamps();
+        });
 
         Schema::create('specialties', function (Blueprint $table) {
             $table->id();
@@ -1813,6 +2121,12 @@ class DoctorAppointmentsPhoneTest extends TestCase
             $table->unsignedBigInteger('blockable_id');
             $table->string('blockable_type');
             $table->timestamps();
+        });
+
+        Schema::create('doctor_representative_favorite', function (Blueprint $table) {
+            $table->unsignedBigInteger('doctors_id');
+            $table->unsignedBigInteger('representative_id');
+            $table->boolean('is_fav')->default(true);
         });
 
         Schema::create('doctor_availabilities', function (Blueprint $table) {
