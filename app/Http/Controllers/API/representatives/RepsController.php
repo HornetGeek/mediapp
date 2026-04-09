@@ -233,7 +233,8 @@ class RepsController extends Controller
     public function bookAppointment(
         Request $request,
         DoctorBusyStatusService $doctorBusyStatus,
-        AppointmentBookingInputService $bookingInput
+        AppointmentBookingInputService $bookingInput,
+        AppointmentStatusRefreshService $statusRefresh
     )
     {
         $duplicateSlotMessage = 'This time slot already has an active appointment (pending or confirmed).';
@@ -266,6 +267,13 @@ class RepsController extends Controller
         $slotStartTime = (string) $normalizedSlot['start_time'];
         $slotEndTime = (string) $normalizedSlot['end_time'];
 
+        $nowInCairo = Carbon::now(self::BOOKING_TIMEZONE);
+        if ($start->lessThanOrEqualTo($nowInCairo)) {
+            return ApiResponse::sendResponse(422, 'Cannot book an appointment in the past', []);
+        }
+
+        $representative = $request->user();
+        $statusRefresh->refreshForRepresentative((int) $representative->id);
 
         // Check if there datetime booked
         $hasActiveSlotConflict = Appointment::where('doctors_id', $request->doctors_id)
@@ -287,8 +295,6 @@ class RepsController extends Controller
         }
 
         // Check how many active appointments the representative has on the requested booking date.
-        $todayInCairo = Carbon::now(self::BOOKING_TIMEZONE)->toDateString();
-        $representative = auth()->user();
         $companyId = $representative->company_id;
         $representativeId = (int) $representative->id;
 
@@ -297,10 +303,6 @@ class RepsController extends Controller
 
         if ($appointmentCount >= $maxAppointmentsPerDay) {
             return ApiResponse::sendResponse(403, 'You have reached the maximum number of appointments allowed for the selected date', []);
-        }
-
-        if ($todayInCairo > $date) {
-            return ApiResponse::sendResponse(422, 'Cannot book an appointment in the past', []);
         }
 
         // Check if doctor is busy
@@ -312,7 +314,6 @@ class RepsController extends Controller
         }
 
         $DoctorBlocks = DoctorBlock::where('doctors_id', $request->doctors_id)->get();
-        $representative = $request->user();
 
         foreach ($DoctorBlocks as $block) {
             if ($block->blockable_type === 'App\Models\Representative' && $block->blockable_id == $representative->id) {
