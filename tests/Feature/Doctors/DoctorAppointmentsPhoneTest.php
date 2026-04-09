@@ -1484,6 +1484,126 @@ class DoctorAppointmentsPhoneTest extends TestCase
         $weekdayDateResponse->assertJsonPath('message', 'date must be in Y-m-d format');
     }
 
+    public function test_booking_rejects_same_day_past_minute(): void
+    {
+        Carbon::setTestNow(Carbon::create(2026, 4, 10, 10, 0, 0, 'Africa/Cairo'));
+
+        try {
+            [$doctor, $rep] = $this->seedDoctorAppointmentData('confirmed');
+            Company::where('id', $rep->company_id)->update(['visits_per_day' => 10]);
+
+            Sanctum::actingAs($rep, ['representative']);
+
+            $response = $this->postJson('/api/reps/booking', [
+                'doctors_id' => $doctor->id,
+                'date' => Carbon::now('Africa/Cairo')->toDateString(),
+                'start_time' => '09:59:00',
+            ]);
+
+            $response->assertStatus(422);
+            $response->assertJsonPath('message', 'Cannot book an appointment in the past');
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_booking_rejects_same_day_time_equal_to_now(): void
+    {
+        Carbon::setTestNow(Carbon::create(2026, 4, 10, 10, 0, 0, 'Africa/Cairo'));
+
+        try {
+            [$doctor, $rep] = $this->seedDoctorAppointmentData('confirmed');
+            Company::where('id', $rep->company_id)->update(['visits_per_day' => 10]);
+
+            Sanctum::actingAs($rep, ['representative']);
+
+            $response = $this->postJson('/api/reps/booking', [
+                'doctors_id' => $doctor->id,
+                'date' => Carbon::now('Africa/Cairo')->toDateString(),
+                'start_time' => '10:00:00',
+            ]);
+
+            $response->assertStatus(422);
+            $response->assertJsonPath('message', 'Cannot book an appointment in the past');
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_booking_allows_same_day_future_minute(): void
+    {
+        Carbon::setTestNow(Carbon::create(2026, 4, 10, 10, 0, 0, 'Africa/Cairo'));
+
+        try {
+            [$doctor, $rep] = $this->seedDoctorAppointmentData('confirmed');
+            Company::where('id', $rep->company_id)->update(['visits_per_day' => 10]);
+
+            $requestedDate = Carbon::now('Africa/Cairo')->toDateString();
+            Sanctum::actingAs($rep, ['representative']);
+
+            $response = $this->postJson('/api/reps/booking', [
+                'doctors_id' => $doctor->id,
+                'date' => $requestedDate,
+                'start_time' => '10:01:00',
+            ]);
+
+            $response->assertStatus(201);
+            $this->assertDatabaseHas('appointments', [
+                'doctors_id' => $doctor->id,
+                'representative_id' => $rep->id,
+                'date' => $requestedDate,
+                'start_time' => '10:01:00',
+                'status' => 'pending',
+            ]);
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_booking_refreshes_stale_pending_with_same_doctor_before_pending_guard(): void
+    {
+        Carbon::setTestNow(Carbon::create(2026, 4, 10, 10, 0, 0, 'Africa/Cairo'));
+
+        try {
+            [$doctor, $rep] = $this->seedDoctorAppointmentData('pending');
+            Company::where('id', $rep->company_id)->update(['visits_per_day' => 10]);
+
+            $staleAppointment = Appointment::firstOrFail();
+            $staleAppointment->update([
+                'date' => Carbon::now('Africa/Cairo')->subDay()->toDateString(),
+                'start_time' => '09:00:00',
+                'end_time' => '09:05:00',
+                'status' => 'pending',
+                'cancelled_by' => null,
+            ]);
+
+            $requestedDate = Carbon::now('Africa/Cairo')->toDateString();
+            Sanctum::actingAs($rep, ['representative']);
+
+            $response = $this->postJson('/api/reps/booking', [
+                'doctors_id' => $doctor->id,
+                'date' => $requestedDate,
+                'start_time' => '10:01:00',
+            ]);
+
+            $response->assertStatus(201);
+            $this->assertDatabaseHas('appointments', [
+                'doctors_id' => $doctor->id,
+                'representative_id' => $rep->id,
+                'date' => $requestedDate,
+                'start_time' => '10:01:00',
+                'status' => 'pending',
+            ]);
+            $this->assertDatabaseHas('appointments', [
+                'id' => $staleAppointment->id,
+                'status' => 'suspended',
+                'cancelled_by' => 'system',
+            ]);
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
     public function test_booking_accepts_supported_time_formats_and_normalizes_to_h_i_s(): void
     {
         [$doctor, $rep] = $this->seedDoctorAppointmentData('confirmed');
