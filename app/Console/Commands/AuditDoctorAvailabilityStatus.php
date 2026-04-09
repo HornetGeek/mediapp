@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\DB;
 
 class AuditDoctorAvailabilityStatus extends Command
 {
-    protected $signature = 'doctor:availability-status {--repair : Restore latest slot per weekday to available for doctors with zero active availability rows}';
+    protected $signature = 'doctor:availability-status {--repair : Restore latest slot per unique slot signature to available for doctors with zero active availability rows}';
 
     protected $description = 'Audit and optionally repair doctors that have availability history but no rows with status=available';
 
@@ -40,7 +40,7 @@ class AuditDoctorAvailabilityStatus extends Command
         $restoreMap = [];
 
         foreach ($affectedDoctors as $summary) {
-            $restoreIds = $this->findLatestAvailabilityIdsByWeekday((int) $summary->doctors_id);
+            $restoreIds = $this->findLatestAvailabilityIdsBySlotSignature((int) $summary->doctors_id);
             $restoreMap[(int) $summary->doctors_id] = $restoreIds;
 
             $tableRows[] = [
@@ -87,26 +87,37 @@ class AuditDoctorAvailabilityStatus extends Command
     /**
      * @return int[]
      */
-    private function findLatestAvailabilityIdsByWeekday(int $doctorId): array
+    private function findLatestAvailabilityIdsBySlotSignature(int $doctorId): array
     {
         $availabilities = DoctorAvailability::query()
             ->where('doctors_id', $doctorId)
             ->orderByDesc('updated_at')
             ->orderByDesc('id')
-            ->get(['id', 'date', 'updated_at']);
+            ->get(['id', 'date', 'start_time', 'end_time', 'ends_next_day', 'updated_at']);
 
-        $latestByWeekday = [];
+        $latestBySlotSignature = [];
 
         foreach ($availabilities as $availability) {
             $weekday = $this->normalizeWeekday((string) $availability->date);
-            if ($weekday === null || isset($latestByWeekday[$weekday])) {
+            if ($weekday === null) {
                 continue;
             }
 
-            $latestByWeekday[$weekday] = (int) $availability->id;
+            $slotSignature = implode('|', [
+                $weekday,
+                (string) $availability->start_time,
+                (string) $availability->end_time,
+                (bool) $availability->ends_next_day ? '1' : '0',
+            ]);
+
+            if (isset($latestBySlotSignature[$slotSignature])) {
+                continue;
+            }
+
+            $latestBySlotSignature[$slotSignature] = (int) $availability->id;
         }
 
-        return array_values($latestByWeekday);
+        return array_values($latestBySlotSignature);
     }
 
     private function normalizeWeekday(string $value): ?string

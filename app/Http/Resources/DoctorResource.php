@@ -27,6 +27,14 @@ class DoctorResource extends JsonResource
 
         $availableTimes = $availableTimes
             ->where('status', 'available')
+            ->sortBy(function ($availability) {
+                return sprintf(
+                    '%02d|%s|%010d',
+                    $this->weekdaySortIndex((string) $availability->date),
+                    $this->normalizeSortableTime((string) $availability->start_time),
+                    (int) $availability->id
+                );
+            })
             ->values();
 
         return [
@@ -54,5 +62,68 @@ class DoctorResource extends JsonResource
             'to_date' => $doctorBusyStatus->formatDateForResponse((string) $this->to_date),
             'busy_period' => $busyPeriod,
         ];
+    }
+
+    private function weekdaySortIndex(string $value): int
+    {
+        $normalizedWeekday = $this->normalizeWeekday($value);
+
+        $weekdayOrder = [
+            'sunday' => 0,
+            'monday' => 1,
+            'tuesday' => 2,
+            'wednesday' => 3,
+            'thursday' => 4,
+            'friday' => 5,
+            'saturday' => 6,
+        ];
+
+        return $weekdayOrder[$normalizedWeekday] ?? 7;
+    }
+
+    private function normalizeWeekday(string $value): ?string
+    {
+        $trimmedValue = trim($value);
+        if ($trimmedValue === '') {
+            return null;
+        }
+
+        $weekday = strtolower($trimmedValue);
+        $weekdayOrder = [
+            'sunday' => true,
+            'monday' => true,
+            'tuesday' => true,
+            'wednesday' => true,
+            'thursday' => true,
+            'friday' => true,
+            'saturday' => true,
+        ];
+
+        if (isset($weekdayOrder[$weekday])) {
+            return $weekday;
+        }
+
+        try {
+            $dateObject = Carbon::createFromFormat('Y-m-d', $trimmedValue);
+        } catch (\Exception $exception) {
+            return null;
+        }
+
+        if ($dateObject->format('Y-m-d') !== $trimmedValue) {
+            return null;
+        }
+
+        return strtolower($dateObject->format('l'));
+    }
+
+    private function normalizeSortableTime(string $value): string
+    {
+        $trimmedValue = trim($value);
+
+        try {
+            return Carbon::parse($trimmedValue)->format('H:i:s');
+        } catch (\Exception $exception) {
+            return '99:99:99';
+        }
     }
 }

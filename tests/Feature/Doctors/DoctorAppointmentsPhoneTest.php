@@ -1630,6 +1630,62 @@ class DoctorAppointmentsPhoneTest extends TestCase
         );
     }
 
+    public function test_booking_inside_one_of_multiple_same_day_slots_succeeds(): void
+    {
+        [$doctor, $rep] = $this->seedDoctorAppointmentData('confirmed');
+        Company::where('id', $rep->company_id)->update(['visits_per_day' => 10]);
+
+        DoctorAvailability::query()->where('doctors_id', $doctor->id)->delete();
+        $requestedDate = Carbon::now('Africa/Cairo')->addDays(4)->toDateString();
+        $requestedWeekday = strtolower(Carbon::parse($requestedDate, 'Africa/Cairo')->format('l'));
+
+        $this->createAvailability($doctor, $requestedWeekday, '09:00:00', '10:00:00');
+        $this->createAvailability($doctor, $requestedWeekday, '14:00:00', '15:00:00');
+
+        Sanctum::actingAs($rep, ['representative']);
+
+        $response = $this->postJson('/api/reps/booking', [
+            'doctors_id' => $doctor->id,
+            'date' => $requestedDate,
+            'start_time' => '14:30:00',
+        ]);
+
+        $response->assertStatus(201);
+        $this->assertTrue(
+            Appointment::query()
+                ->where('doctors_id', $doctor->id)
+                ->where('representative_id', $rep->id)
+                ->whereDate('date', $requestedDate)
+                ->where('start_time', '14:30:00')
+                ->where('status', 'pending')
+                ->exists()
+        );
+    }
+
+    public function test_booking_in_gap_between_multiple_same_day_slots_is_rejected(): void
+    {
+        [$doctor, $rep] = $this->seedDoctorAppointmentData('confirmed');
+        Company::where('id', $rep->company_id)->update(['visits_per_day' => 10]);
+
+        DoctorAvailability::query()->where('doctors_id', $doctor->id)->delete();
+        $requestedDate = Carbon::now('Africa/Cairo')->addDays(4)->toDateString();
+        $requestedWeekday = strtolower(Carbon::parse($requestedDate, 'Africa/Cairo')->format('l'));
+
+        $this->createAvailability($doctor, $requestedWeekday, '09:00:00', '10:00:00');
+        $this->createAvailability($doctor, $requestedWeekday, '14:00:00', '15:00:00');
+
+        Sanctum::actingAs($rep, ['representative']);
+
+        $response = $this->postJson('/api/reps/booking', [
+            'doctors_id' => $doctor->id,
+            'date' => $requestedDate,
+            'start_time' => '11:00:00',
+        ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonPath('message', 'Requested time is outside doctor availability');
+    }
+
     public function test_booking_inside_overnight_availability_from_previous_day_succeeds(): void
     {
         [$doctor, $rep] = $this->seedDoctorAppointmentData('confirmed');

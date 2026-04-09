@@ -24,19 +24,21 @@ class DoctorAvailabilityStatusCommandTest extends TestCase
         $this->assertDatabaseHas('doctor_availabilities', ['id' => 1, 'status' => 'canceled']);
         $this->assertDatabaseHas('doctor_availabilities', ['id' => 2, 'status' => 'booked']);
         $this->assertDatabaseHas('doctor_availabilities', ['id' => 3, 'status' => 'busy']);
+        $this->assertDatabaseHas('doctor_availabilities', ['id' => 5, 'status' => 'canceled']);
     }
 
-    public function test_command_repairs_affected_doctors_by_restoring_latest_row_per_weekday(): void
+    public function test_command_repairs_affected_doctors_by_restoring_latest_row_per_slot_signature(): void
     {
         $this->createDoctorAvailabilitiesTable();
         $this->seedAvailabilityRows();
 
         Artisan::call('doctor:availability-status', ['--repair' => true]);
 
-        $this->assertDatabaseHas('doctor_availabilities', ['id' => 1, 'status' => 'canceled']);
+        $this->assertDatabaseHas('doctor_availabilities', ['id' => 1, 'status' => 'available']);
         $this->assertDatabaseHas('doctor_availabilities', ['id' => 2, 'status' => 'available']);
         $this->assertDatabaseHas('doctor_availabilities', ['id' => 3, 'status' => 'available']);
         $this->assertDatabaseHas('doctor_availabilities', ['id' => 4, 'status' => 'available']);
+        $this->assertDatabaseHas('doctor_availabilities', ['id' => 5, 'status' => 'canceled']);
     }
 
     private function createDoctorAvailabilitiesTable(): void
@@ -79,6 +81,17 @@ class DoctorAvailabilityStatusCommandTest extends TestCase
                 'status' => 'booked',
                 'created_at' => now()->subMinutes(4),
                 'updated_at' => now()->subMinute(),
+            ],
+            [
+                'id' => 5,
+                'doctors_id' => 1,
+                'date' => 'monday',
+                'start_time' => '10:00:00',
+                'end_time' => '11:00:00',
+                'ends_next_day' => 0,
+                'status' => 'canceled',
+                'created_at' => now()->subMinutes(6),
+                'updated_at' => now()->subMinutes(6),
             ],
             [
                 'id' => 3,
