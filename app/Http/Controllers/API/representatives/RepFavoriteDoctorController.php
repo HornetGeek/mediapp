@@ -8,6 +8,7 @@ use App\Http\Resources\DoctorResource;
 use App\Models\Doctors;
 use App\Services\DoctorBusyStatusService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Validator;
 
 class RepFavoriteDoctorController extends Controller
 {
@@ -51,8 +52,18 @@ class RepFavoriteDoctorController extends Controller
         return ApiResponse::sendResponse(500, 'Failed to remove doctor from favorites', []);
     }
 
-    public function list(DoctorBusyStatusService $doctorBusyStatus)
+    public function list(Request $request, DoctorBusyStatusService $doctorBusyStatus)
     {
+        $validator = Validator::make($request->all(), [
+            'date' => ['nullable', 'date_format:Y-m-d'],
+        ], [], [
+            'date' => 'Date',
+        ]);
+
+        if ($validator->fails()) {
+            return ApiResponse::sendResponse(422, $validator->messages()->first(), []);
+        }
+
         $rep = auth()->user();
         $favoriteDoctors = $rep->favoriteDoctors()
             ->with([
@@ -73,14 +84,23 @@ class RepFavoriteDoctorController extends Controller
 
     public function searchFavoriteDoctors(Request $request, DoctorBusyStatusService $doctorBusyStatus)
     {
-        $request->validate([
-            'search' => 'required|string',
+        $validator = Validator::make($request->all(), [
+            'search' => ['required', 'string', 'max:255'],
+            'date' => ['nullable', 'date_format:Y-m-d'],
+        ], [], [
+            'search' => 'Search',
+            'date' => 'Date',
         ]);
 
+        if ($validator->fails()) {
+            return ApiResponse::sendResponse(422, $validator->messages()->first(), []);
+        }
+
         $rep = auth()->user();
+        $search = trim((string) $request->input('search'));
 
         $favoriteDoctors = $rep->favoriteDoctors()
-            ->favoriteFilter($request->search)
+            ->favoriteFilter($search)
             ->with([
                 'availableTimes' => function ($query) {
                     $query->where('status', 'available');

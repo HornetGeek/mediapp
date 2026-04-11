@@ -129,6 +129,7 @@ class RepsController extends Controller
             'specialty' => ['nullable', 'string', 'max:255'],
             'specialty_id' => ['nullable', 'integer', 'exists:specialties,id'],
             'address_1' => ['nullable', 'string', 'max:255'],
+            'date' => ['nullable', 'date_format:Y-m-d'],
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ], [], [
@@ -136,6 +137,7 @@ class RepsController extends Controller
             'specialty' => 'Specialty',
             'specialty_id' => 'Specialty',
             'address_1' => 'Address',
+            'date' => 'Date',
             'page' => 'Page',
             'per_page' => 'Per Page',
         ]);
@@ -230,12 +232,14 @@ class RepsController extends Controller
             'name' => ['nullable', 'string', 'max:255'],
             'location' => ['nullable', 'string', 'max:255'],
             'specialty_id' => ['nullable', 'integer', 'exists:specialties,id'],
+            'date' => ['nullable', 'date_format:Y-m-d'],
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ], [], [
             'name' => 'Name',
             'location' => 'Location',
             'specialty_id' => 'Specialty',
+            'date' => 'Date',
             'page' => 'Page',
             'per_page' => 'Per Page',
         ]);
@@ -810,10 +814,12 @@ class RepsController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'specialty_id' => ['nullable', 'integer', 'exists:specialties,id'],
+            'date' => ['nullable', 'date_format:Y-m-d'],
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ], [], [
             'specialty_id' => 'Specialty',
+            'date' => 'Date',
             'page' => 'Page',
             'per_page' => 'Per Page',
         ]);
