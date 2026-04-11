@@ -72,8 +72,12 @@ class RepsController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'date' => ['nullable', 'date_format:Y-m-d'],
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ], [], [
             'date' => 'Date',
+            'page' => 'Page',
+            'per_page' => 'Per Page',
         ]);
 
         if ($validator->fails()) {
@@ -90,18 +94,27 @@ class RepsController extends Controller
         $targetDate = $request->filled('date')
             ? (string) $request->input('date')
             : Carbon::now(self::BOOKING_TIMEZONE)->toDateString();
+        $perPage = (int) $request->input('per_page', 10);
 
         $rep->loadMissing('company');
 
         $dailyVisitsLimit = $this->resolveRepresentativeDailyVisitsLimit($rep);
         $usedVisitsToday = $this->countUsedVisitsForDate($representativeId, $targetDate);
         $remainingVisitsToday = max(0, $dailyVisitsLimit - $usedVisitsToday);
+        $consumedAppointments = Appointment::with(['doctor.specialty', 'representative', 'company'])
+            ->where('representative_id', $representativeId)
+            ->whereDate('date', $targetDate)
+            ->whereIn('status', ['pending', 'confirmed'])
+            ->orderBy('start_time', 'asc')
+            ->paginate($perPage);
+        $pagination = $this->buildPaginationMeta($consumedAppointments);
 
         return ApiResponse::sendResponse(200, 'Visits balance fetched successfully', [
             'daily_visits_limit' => $dailyVisitsLimit,
             'used_visits_today' => $usedVisitsToday,
             'remaining_visits_today' => $remainingVisitsToday,
-        ]);
+            'consumed_appointments' => AppointmentsResource::collection($consumedAppointments->items()),
+        ], $pagination);
     }
 
     public function getDoctorProfile($doctor_id, DoctorBusyStatusService $doctorBusyStatus)
