@@ -68,6 +68,42 @@ class RepsController extends Controller
         return ApiResponse::sendResponse(404, 'Representative not found', []);
     }
 
+    public function getVisitsBalance(Request $request, AppointmentStatusRefreshService $statusRefresh)
+    {
+        $validator = Validator::make($request->all(), [
+            'date' => ['nullable', 'date_format:Y-m-d'],
+        ], [], [
+            'date' => 'Date',
+        ]);
+
+        if ($validator->fails()) {
+            return ApiResponse::sendResponse(422, $validator->messages()->first(), []);
+        }
+
+        $rep = auth()->user();
+
+        if (!$rep) {
+            return ApiResponse::sendResponse(404, 'Representative not found', []);
+        }
+
+        $representativeId = $this->refreshRepresentativeAppointments($statusRefresh);
+        $targetDate = $request->filled('date')
+            ? (string) $request->input('date')
+            : Carbon::now(self::BOOKING_TIMEZONE)->toDateString();
+
+        $rep->loadMissing('company');
+
+        $dailyVisitsLimit = $this->resolveRepresentativeDailyVisitsLimit($rep);
+        $usedVisitsToday = $this->countUsedVisitsForDate($representativeId, $targetDate);
+        $remainingVisitsToday = max(0, $dailyVisitsLimit - $usedVisitsToday);
+
+        return ApiResponse::sendResponse(200, 'Visits balance fetched successfully', [
+            'daily_visits_limit' => $dailyVisitsLimit,
+            'used_visits_today' => $usedVisitsToday,
+            'remaining_visits_today' => $remainingVisitsToday,
+        ]);
+    }
+
     public function getDoctorProfile($doctor_id, DoctorBusyStatusService $doctorBusyStatus)
     {
         $doctor = Doctors::with([

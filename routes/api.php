@@ -210,6 +210,7 @@ Route::prefix('reps')->group(function () {
 
         Route::controller(RepsController::class)->group(function () {
             Route::get('profile', 'getRepsProfile');
+            Route::get('visits/balance', 'getVisitsBalance');
             Route::get('specialities', 'get_Speciality');
             Route::get('/doctors/all', 'getAvailableTimeForDoctor');
             Route::get('/doctors/search', 'filterDoctors');
