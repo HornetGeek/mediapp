@@ -32,18 +32,30 @@ class RepsController extends Controller
 {
     private const BOOKING_TIMEZONE = 'Africa/Cairo';
 
-    public function getRepsProfile(AppointmentStatusRefreshService $statusRefresh)
+    public function getRepsProfile(Request $request, AppointmentStatusRefreshService $statusRefresh)
     {
+        $validator = Validator::make($request->all(), [
+            'date' => ['nullable', 'date_format:Y-m-d'],
+        ], [], [
+            'date' => 'Date',
+        ]);
+
+        if ($validator->fails()) {
+            return ApiResponse::sendResponse(422, $validator->messages()->first(), []);
+        }
+
         $rep = auth()->user();
 
         if ($rep) {
             $representativeId = $this->refreshRepresentativeAppointments($statusRefresh);
-            $todayInCairo = Carbon::now('Africa/Cairo')->toDateString();
+            $targetDate = $request->filled('date')
+                ? (string) $request->input('date')
+                : Carbon::now(self::BOOKING_TIMEZONE)->toDateString();
 
             $rep->load(['company', 'areas', 'lines']);
 
             $dailyVisitsLimit = $this->resolveRepresentativeDailyVisitsLimit($rep);
-            $usedVisitsToday = $this->countUsedVisitsForDate($representativeId, $todayInCairo);
+            $usedVisitsToday = $this->countUsedVisitsForDate($representativeId, $targetDate);
             $remainingVisitsToday = max(0, $dailyVisitsLimit - $usedVisitsToday);
 
             $rep->setAttribute('daily_visits_limit', $dailyVisitsLimit);
