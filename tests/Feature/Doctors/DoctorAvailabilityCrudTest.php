@@ -115,6 +115,126 @@ class DoctorAvailabilityCrudTest extends TestCase
         }
     }
 
+    public function test_save_available_time_accepts_max_reps_per_hour_one_and_two(): void
+    {
+        $doctor = $this->createDoctor('doctor-save-max-reps-values@example.com', '01111111257');
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $firstResponse = $this->putJson('/api/doctor/save-available-time', [
+            'date' => 'monday',
+            'start_time' => '09:00 AM',
+            'end_time' => '10:00 AM',
+            'max_reps_per_hour' => 1,
+        ]);
+        $firstResponse->assertStatus(200);
+
+        $secondResponse = $this->putJson('/api/doctor/save-available-time', [
+            'date' => 'tuesday',
+            'start_time' => '09:00 AM',
+            'end_time' => '10:00 AM',
+            'max_reps_per_hour' => 2,
+        ]);
+        $secondResponse->assertStatus(200);
+
+        $this->assertDatabaseHas('doctor_availabilities', [
+            'doctors_id' => $doctor->id,
+            'date' => 'monday',
+            'start_time' => '09:00:00',
+            'end_time' => '10:00:00',
+            'max_reps_per_hour' => 1,
+            'status' => 'available',
+        ]);
+
+        $this->assertDatabaseHas('doctor_availabilities', [
+            'doctors_id' => $doctor->id,
+            'date' => 'tuesday',
+            'start_time' => '09:00:00',
+            'end_time' => '10:00:00',
+            'max_reps_per_hour' => 2,
+            'status' => 'available',
+        ]);
+    }
+
+    public function test_save_available_time_rejects_invalid_max_reps_per_hour_values(): void
+    {
+        $doctor = $this->createDoctor('doctor-save-max-reps-invalid@example.com', '01111111258');
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $zeroResponse = $this->putJson('/api/doctor/save-available-time', [
+            'date' => 'monday',
+            'start_time' => '09:00 AM',
+            'end_time' => '10:00 AM',
+            'max_reps_per_hour' => 0,
+        ]);
+        $zeroResponse->assertStatus(422);
+
+        $threeResponse = $this->putJson('/api/doctor/save-available-time', [
+            'date' => 'monday',
+            'start_time' => '10:00 AM',
+            'end_time' => '11:00 AM',
+            'max_reps_per_hour' => 3,
+        ]);
+        $threeResponse->assertStatus(422);
+    }
+
+    public function test_save_available_time_defaults_max_reps_per_hour_to_two_when_omitted(): void
+    {
+        $doctor = $this->createDoctor('doctor-save-max-reps-default@example.com', '01111111259');
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $response = $this->putJson('/api/doctor/save-available-time', [
+            'date' => 'wednesday',
+            'start_time' => '01:00 PM',
+            'end_time' => '02:00 PM',
+        ]);
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('data.available_times.0.max_reps_per_hour', 2);
+
+        $this->assertDatabaseHas('doctor_availabilities', [
+            'doctors_id' => $doctor->id,
+            'date' => 'wednesday',
+            'start_time' => '13:00:00',
+            'end_time' => '14:00:00',
+            'max_reps_per_hour' => 2,
+            'status' => 'available',
+        ]);
+    }
+
+    public function test_update_available_time_updates_max_reps_per_hour_and_keeps_existing_when_omitted(): void
+    {
+        $doctor = $this->createDoctor('doctor-update-max-reps@example.com', '01111111260');
+        $availability = $this->createAvailability($doctor, 'monday', '09:00:00', '10:00:00', 'available', false, 2);
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $updateWithOneResponse = $this->putJson('/api/doctor/available-time/' . $availability->id, [
+            'date' => 'monday',
+            'start_time' => '09:00 AM',
+            'end_time' => '10:00 AM',
+            'max_reps_per_hour' => 1,
+        ]);
+        $updateWithOneResponse->assertStatus(200);
+        $updateWithOneResponse->assertJsonPath('data.max_reps_per_hour', 1);
+
+        $this->assertDatabaseHas('doctor_availabilities', [
+            'id' => $availability->id,
+            'max_reps_per_hour' => 1,
+        ]);
+
+        $updateWithoutFieldResponse = $this->putJson('/api/doctor/available-time/' . $availability->id, [
+            'date' => 'monday',
+            'start_time' => '09:00 AM',
+            'end_time' => '10:00 AM',
+        ]);
+        $updateWithoutFieldResponse->assertStatus(200);
+        $updateWithoutFieldResponse->assertJsonPath('data.max_reps_per_hour', 1);
+
+        $this->assertDatabaseHas('doctor_availabilities', [
+            'id' => $availability->id,
+            'max_reps_per_hour' => 1,
+        ]);
+    }
+
     public function test_doctor_profile_and_available_times_endpoint_return_consistent_available_slots(): void
     {
         $doctor = $this->createDoctor('doctor-profile-consistency@example.com', '01111111234');
@@ -1529,7 +1649,8 @@ class DoctorAvailabilityCrudTest extends TestCase
         string $start,
         string $end,
         string $status = 'available',
-        bool $endsNextDay = false
+        bool $endsNextDay = false,
+        int $maxRepsPerHour = 2
     ): DoctorAvailability
     {
         return DoctorAvailability::create([
@@ -1538,6 +1659,7 @@ class DoctorAvailabilityCrudTest extends TestCase
             'start_time' => $start,
             'end_time' => $end,
             'ends_next_day' => $endsNextDay,
+            'max_reps_per_hour' => $maxRepsPerHour,
             'status' => $status,
         ]);
     }
@@ -1689,6 +1811,7 @@ class DoctorAvailabilityCrudTest extends TestCase
             $table->time('start_time');
             $table->time('end_time');
             $table->boolean('ends_next_day')->default(false);
+            $table->unsignedTinyInteger('max_reps_per_hour')->default(2);
             $table->enum('status', ['available', 'canceled', 'booked', 'busy'])->default('available');
             $table->timestamps();
         });

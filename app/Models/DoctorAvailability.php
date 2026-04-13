@@ -15,11 +15,13 @@ class DoctorAvailability extends Model
         'start_time',
         'end_time',
         'ends_next_day',
+        'max_reps_per_hour',
         'status',
     ];
 
     protected $casts = [
         'ends_next_day' => 'boolean',
+        'max_reps_per_hour' => 'integer',
     ];
     
     public function doctor()

@@ -77,7 +77,7 @@ class DoctorsController extends Controller
             [
                 'availableTimes' => function ($query) {
                     $query->where('status', 'available')
-                        ->select('id', 'doctors_id', 'date', 'start_time', 'end_time', 'ends_next_day', 'status');
+                        ->select('id', 'doctors_id', 'date', 'start_time', 'end_time', 'ends_next_day', 'max_reps_per_hour', 'status');
                 }
             ]
         );
@@ -199,6 +199,7 @@ class DoctorsController extends Controller
             'start_time' => ['required', 'string'],
             'end_time' => ['required', 'string'],
             'ends_next_day' => ['nullable', 'boolean'],
+            'max_reps_per_hour' => ['nullable', 'integer', 'in:1,2'],
         ]);
 
         if ($validator->fails()) {
@@ -231,6 +232,7 @@ class DoctorsController extends Controller
             'start_time' => $normalizedTimes['start_time'],
             'end_time' => $normalizedTimes['end_time'],
             'ends_next_day' => $normalizedTimes['ends_next_day'],
+            'max_reps_per_hour' => (int) ($validated['max_reps_per_hour'] ?? 2),
             'status' => 'available',
         ]);
 
@@ -250,6 +252,7 @@ class DoctorsController extends Controller
             'start_time' => ['required', 'string'],
             'end_time' => ['required', 'string'],
             'ends_next_day' => ['nullable', 'boolean'],
+            'max_reps_per_hour' => ['nullable', 'integer', 'in:1,2'],
         ]);
 
         if ($validator->fails()) {
@@ -315,6 +318,7 @@ class DoctorsController extends Controller
             'start_time' => $normalizedTimes['start_time'],
             'end_time' => $normalizedTimes['end_time'],
             'ends_next_day' => $normalizedTimes['ends_next_day'],
+            'max_reps_per_hour' => (int) ($validated['max_reps_per_hour'] ?? $availability->max_reps_per_hour ?? 2),
         ]);
 
         return ApiResponse::sendResponse(200, 'Availability updated successfully', new AppAvailableTimeResource($availability->fresh()));

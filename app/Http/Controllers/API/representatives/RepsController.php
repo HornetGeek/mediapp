@@ -303,6 +303,7 @@ class RepsController extends Controller
     )
     {
         $duplicateSlotMessage = 'This time slot already has an active appointment (pending or confirmed).';
+        $hourlyCapacityReachedMessage = 'This hour has reached the maximum number of visits for this doctor.';
 
         $validated = Validator::make($request->all(), [
             'doctors_id' => 'required|exists:doctors,id',
@@ -403,8 +404,18 @@ class RepsController extends Controller
             return ApiResponse::sendResponse(403, 'You cannot book appointment with this doctor, because you have previous book not completed', []);
         }
 
-        if (!$this->isBookingSlotWithinDoctorAvailability((int) $request->doctors_id, $start, $end)) {
+        $coveringAvailability = $this->resolveAvailabilityForBookingSlot((int) $request->doctors_id, $start, $end);
+        if ($coveringAvailability === null) {
             return ApiResponse::sendResponse(422, 'Requested time is outside doctor availability', []);
+        }
+
+        if (!$this->hasRemainingHourlyCapacity(
+            (int) $request->doctors_id,
+            (string) $date,
+            $start,
+            (int) ($coveringAvailability->max_reps_per_hour ?? 2)
+        )) {
+            return ApiResponse::sendResponse(409, $hourlyCapacityReachedMessage, []);
         }
 
         try {
@@ -476,23 +487,45 @@ class RepsController extends Controller
             || str_contains($message, 'unique constraint failed: appointments.doctors_id, appointments.date, appointments.start_time, appointments.slot_lock');
     }
 
-    private function isBookingSlotWithinDoctorAvailability(
+    private function resolveAvailabilityForBookingSlot(
         int $doctorId,
         Carbon $slotStartAt,
         Carbon $slotEndAt
-    ): bool {
+    ): ?DoctorAvailability {
         $availabilities = DoctorAvailability::query()
             ->where('doctors_id', $doctorId)
             ->where('status', 'available')
-            ->get(['date', 'start_time', 'end_time', 'ends_next_day']);
+            ->get(['id', 'date', 'start_time', 'end_time', 'ends_next_day', 'max_reps_per_hour']);
 
         foreach ($availabilities as $availability) {
             if ($this->availabilityCoversSlot($availability, $slotStartAt, $slotEndAt)) {
-                return true;
+                return $availability;
             }
         }
 
-        return false;
+        return null;
+    }
+
+    private function hasRemainingHourlyCapacity(
+        int $doctorId,
+        string $date,
+        Carbon $slotStartAt,
+        int $maxRepsPerHour
+    ): bool {
+        $hourlyLimit = in_array($maxRepsPerHour, [1, 2], true) ? $maxRepsPerHour : 2;
+        $targetHour = $slotStartAt->copy()->setTimezone(self::BOOKING_TIMEZONE)->format('H');
+
+        $activeHourlyVisits = DB::table('appointments')
+            ->where('doctors_id', $doctorId)
+            ->whereDate('date', $date)
+            ->whereIn('status', ['pending', 'confirmed'])
+            ->pluck('start_time')
+            ->filter(function ($startTime) use ($targetHour) {
+                return substr((string) $startTime, 0, 2) === $targetHour;
+            })
+            ->count();
+
+        return $activeHourlyVisits < $hourlyLimit;
     }
 
     private function availabilityCoversSlot(
