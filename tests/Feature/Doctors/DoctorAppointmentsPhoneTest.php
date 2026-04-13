@@ -2155,7 +2155,8 @@ class DoctorAppointmentsPhoneTest extends TestCase
         string $startTime,
         string $endTime,
         bool $endsNextDay = false,
-        string $status = 'available'
+        string $status = 'available',
+        int $maxRepsPerHour = 2
     ): DoctorAvailability {
         return DoctorAvailability::create([
             'doctors_id' => $doctor->id,
@@ -2163,6 +2164,7 @@ class DoctorAppointmentsPhoneTest extends TestCase
             'start_time' => $startTime,
             'end_time' => $endTime,
             'ends_next_day' => $endsNextDay,
+            'max_reps_per_hour' => $maxRepsPerHour,
             'status' => $status,
         ]);
     }
@@ -2312,6 +2314,7 @@ class DoctorAppointmentsPhoneTest extends TestCase
             $table->time('start_time');
             $table->time('end_time');
             $table->boolean('ends_next_day')->default(false);
+            $table->unsignedTinyInteger('max_reps_per_hour')->default(2);
             $table->enum('status', ['available', 'canceled', 'booked', 'busy'])->default('available');
             $table->timestamps();
         });
