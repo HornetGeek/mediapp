@@ -364,12 +364,12 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
         );
     }
 
-    public function test_booking_enforces_hourly_capacity_limit_one_per_hour(): void
+    public function test_booking_enforces_range_capacity_limit_with_single_allowed_visit(): void
     {
         $company = $this->createCompany();
-        $firstRep = $this->createRepresentative($company, 'hourly-limit-one-rep-a@example.com', '01055555601');
-        $secondRep = $this->createRepresentative($company, 'hourly-limit-one-rep-b@example.com', '01055555602');
-        $doctor = $this->createDoctor('hourly-limit-one-doctor@example.com', '01066666701');
+        $firstRep = $this->createRepresentative($company, 'range-limit-one-rep-a@example.com', '01055555601');
+        $secondRep = $this->createRepresentative($company, 'range-limit-one-rep-b@example.com', '01055555602');
+        $doctor = $this->createDoctor('range-limit-one-doctor@example.com', '01066666701');
 
         $date = now('Africa/Cairo')->addDays(2)->toDateString();
         $weekday = strtolower(Carbon::parse($date, 'Africa/Cairo')->format('l'));
@@ -377,7 +377,7 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
         DoctorAvailability::query()
             ->where('doctors_id', $doctor->id)
             ->where('date', $weekday)
-            ->update(['max_reps_per_hour' => 1]);
+            ->update(['max_reps_per_range' => 1]);
 
         Sanctum::actingAs($firstRep, ['representative']);
         $firstResponse = $this->postJson('/api/reps/booking', [
@@ -394,16 +394,16 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
             'start_time' => '10:40:00',
         ]);
         $secondResponse->assertStatus(409);
-        $secondResponse->assertJsonPath('message', 'This hour has reached the maximum number of visits for this doctor.');
+        $secondResponse->assertJsonPath('message', 'This availability range has reached the maximum number of visits for this doctor.');
     }
 
-    public function test_booking_enforces_hourly_capacity_limit_two_per_hour(): void
+    public function test_booking_enforces_range_capacity_limit_with_two_allowed_visits(): void
     {
         $company = $this->createCompany();
-        $firstRep = $this->createRepresentative($company, 'hourly-limit-two-rep-a@example.com', '01055555603');
-        $secondRep = $this->createRepresentative($company, 'hourly-limit-two-rep-b@example.com', '01055555604');
-        $thirdRep = $this->createRepresentative($company, 'hourly-limit-two-rep-c@example.com', '01055555605');
-        $doctor = $this->createDoctor('hourly-limit-two-doctor@example.com', '01066666702');
+        $firstRep = $this->createRepresentative($company, 'range-limit-two-rep-a@example.com', '01055555603');
+        $secondRep = $this->createRepresentative($company, 'range-limit-two-rep-b@example.com', '01055555604');
+        $thirdRep = $this->createRepresentative($company, 'range-limit-two-rep-c@example.com', '01055555605');
+        $doctor = $this->createDoctor('range-limit-two-doctor@example.com', '01066666702');
 
         $date = now('Africa/Cairo')->addDays(2)->toDateString();
         $weekday = strtolower(Carbon::parse($date, 'Africa/Cairo')->format('l'));
@@ -411,7 +411,7 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
         DoctorAvailability::query()
             ->where('doctors_id', $doctor->id)
             ->where('date', $weekday)
-            ->update(['max_reps_per_hour' => 2]);
+            ->update(['max_reps_per_range' => 2]);
 
         Sanctum::actingAs($firstRep, ['representative']);
         $firstResponse = $this->postJson('/api/reps/booking', [
@@ -433,18 +433,19 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
         $thirdResponse = $this->postJson('/api/reps/booking', [
             'doctors_id' => $doctor->id,
             'date' => $date,
-            'start_time' => '10:40:00',
+            'start_time' => '12:40:00',
         ]);
         $thirdResponse->assertStatus(409);
-        $thirdResponse->assertJsonPath('message', 'This hour has reached the maximum number of visits for this doctor.');
+        $thirdResponse->assertJsonPath('message', 'This availability range has reached the maximum number of visits for this doctor.');
     }
 
-    public function test_booking_hourly_capacity_is_scoped_per_clock_hour(): void
+    public function test_booking_range_capacity_is_scoped_per_non_overlapping_ranges(): void
     {
         $company = $this->createCompany();
-        $firstRep = $this->createRepresentative($company, 'hourly-scope-rep-a@example.com', '01055555606');
-        $secondRep = $this->createRepresentative($company, 'hourly-scope-rep-b@example.com', '01055555607');
-        $doctor = $this->createDoctor('hourly-scope-doctor@example.com', '01066666703');
+        $firstRep = $this->createRepresentative($company, 'range-scope-rep-a@example.com', '01055555606');
+        $secondRep = $this->createRepresentative($company, 'range-scope-rep-b@example.com', '01055555607');
+        $thirdRep = $this->createRepresentative($company, 'range-scope-rep-c@example.com', '01055555608');
+        $doctor = $this->createDoctor('range-scope-doctor@example.com', '01066666703');
 
         $date = now('Africa/Cairo')->addDays(2)->toDateString();
         $weekday = strtolower(Carbon::parse($date, 'Africa/Cairo')->format('l'));
@@ -452,7 +453,26 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
         DoctorAvailability::query()
             ->where('doctors_id', $doctor->id)
             ->where('date', $weekday)
-            ->update(['max_reps_per_hour' => 1]);
+            ->delete();
+
+        DoctorAvailability::create([
+            'doctors_id' => $doctor->id,
+            'date' => $weekday,
+            'start_time' => '10:00:00',
+            'end_time' => '11:00:00',
+            'ends_next_day' => false,
+            'max_reps_per_range' => 1,
+            'status' => 'available',
+        ]);
+        DoctorAvailability::create([
+            'doctors_id' => $doctor->id,
+            'date' => $weekday,
+            'start_time' => '13:00:00',
+            'end_time' => '14:00:00',
+            'ends_next_day' => false,
+            'max_reps_per_range' => 1,
+            'status' => 'available',
+        ]);
 
         Sanctum::actingAs($firstRep, ['representative']);
         $firstResponse = $this->postJson('/api/reps/booking', [
@@ -466,9 +486,69 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
         $secondResponse = $this->postJson('/api/reps/booking', [
             'doctors_id' => $doctor->id,
             'date' => $date,
-            'start_time' => '11:05:00',
+            'start_time' => '13:05:00',
         ]);
         $secondResponse->assertStatus(201);
+
+        Sanctum::actingAs($thirdRep, ['representative']);
+        $thirdResponse = $this->postJson('/api/reps/booking', [
+            'doctors_id' => $doctor->id,
+            'date' => $date,
+            'start_time' => '10:20:00',
+        ]);
+        $thirdResponse->assertStatus(409);
+    }
+
+    public function test_booking_overnight_range_uses_single_shared_total_across_both_dates(): void
+    {
+        $company = $this->createCompany();
+        $firstRep = $this->createRepresentative($company, 'range-overnight-rep-a@example.com', '01055555609');
+        $secondRep = $this->createRepresentative($company, 'range-overnight-rep-b@example.com', '01055555610');
+        $thirdRep = $this->createRepresentative($company, 'range-overnight-rep-c@example.com', '01055555611');
+        $doctor = $this->createDoctor('range-overnight-doctor@example.com', '01066666704');
+
+        $startDate = now('Africa/Cairo')->addDays(2)->toDateString();
+        $endDate = Carbon::parse($startDate, 'Africa/Cairo')->addDay()->toDateString();
+        $weekday = strtolower(Carbon::parse($startDate, 'Africa/Cairo')->format('l'));
+
+        DoctorAvailability::query()
+            ->where('doctors_id', $doctor->id)
+            ->delete();
+
+        DoctorAvailability::create([
+            'doctors_id' => $doctor->id,
+            'date' => $weekday,
+            'start_time' => '22:00:00',
+            'end_time' => '02:00:00',
+            'ends_next_day' => true,
+            'max_reps_per_range' => 2,
+            'status' => 'available',
+        ]);
+
+        Sanctum::actingAs($firstRep, ['representative']);
+        $firstResponse = $this->postJson('/api/reps/booking', [
+            'doctors_id' => $doctor->id,
+            'date' => $startDate,
+            'start_time' => '22:30:00',
+        ]);
+        $firstResponse->assertStatus(201);
+
+        Sanctum::actingAs($secondRep, ['representative']);
+        $secondResponse = $this->postJson('/api/reps/booking', [
+            'doctors_id' => $doctor->id,
+            'date' => $endDate,
+            'start_time' => '00:30:00',
+        ]);
+        $secondResponse->assertStatus(201);
+
+        Sanctum::actingAs($thirdRep, ['representative']);
+        $thirdResponse = $this->postJson('/api/reps/booking', [
+            'doctors_id' => $doctor->id,
+            'date' => $endDate,
+            'start_time' => '01:30:00',
+        ]);
+        $thirdResponse->assertStatus(409);
+        $thirdResponse->assertJsonPath('message', 'This availability range has reached the maximum number of visits for this doctor.');
     }
 
     private function createCompany(): Company
@@ -527,7 +607,7 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
                 'start_time' => '00:00:00',
                 'end_time' => '23:59:00',
                 'ends_next_day' => false,
-                'max_reps_per_hour' => 2,
+                'max_reps_per_range' => 2,
                 'status' => 'available',
             ]);
         }
@@ -626,7 +706,7 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
             $table->time('start_time');
             $table->time('end_time');
             $table->boolean('ends_next_day')->default(false);
-            $table->unsignedTinyInteger('max_reps_per_hour')->default(2);
+            $table->unsignedInteger('max_reps_per_range')->default(2);
             $table->enum('status', ['available', 'canceled', 'booked', 'busy'])->default('available');
             $table->timestamps();
         });

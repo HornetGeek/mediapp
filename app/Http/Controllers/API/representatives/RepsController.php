@@ -303,7 +303,7 @@ class RepsController extends Controller
     )
     {
         $duplicateSlotMessage = 'This time slot already has an active appointment (pending or confirmed).';
-        $hourlyCapacityReachedMessage = 'This hour has reached the maximum number of visits for this doctor.';
+        $rangeCapacityReachedMessage = 'This availability range has reached the maximum number of visits for this doctor.';
 
         $validated = Validator::make($request->all(), [
             'doctors_id' => 'required|exists:doctors,id',
@@ -404,18 +404,18 @@ class RepsController extends Controller
             return ApiResponse::sendResponse(403, 'You cannot book appointment with this doctor, because you have previous book not completed', []);
         }
 
-        $coveringAvailability = $this->resolveAvailabilityForBookingSlot((int) $request->doctors_id, $start, $end);
-        if ($coveringAvailability === null) {
+        $availabilityOccurrence = $this->resolveAvailabilityOccurrenceForBookingSlot((int) $request->doctors_id, $start, $end);
+        if ($availabilityOccurrence === null) {
             return ApiResponse::sendResponse(422, 'Requested time is outside doctor availability', []);
         }
 
-        if (!$this->hasRemainingHourlyCapacity(
+        if (!$this->hasRemainingRangeCapacity(
             (int) $request->doctors_id,
-            (string) $date,
-            $start,
-            (int) ($coveringAvailability->max_reps_per_hour ?? 2)
+            $availabilityOccurrence['start_at'],
+            $availabilityOccurrence['end_at'],
+            (int) ($availabilityOccurrence['availability']->max_reps_per_range ?? 1)
         )) {
-            return ApiResponse::sendResponse(409, $hourlyCapacityReachedMessage, []);
+            return ApiResponse::sendResponse(409, $rangeCapacityReachedMessage, []);
         }
 
         try {
@@ -487,52 +487,87 @@ class RepsController extends Controller
             || str_contains($message, 'unique constraint failed: appointments.doctors_id, appointments.date, appointments.start_time, appointments.slot_lock');
     }
 
-    private function resolveAvailabilityForBookingSlot(
+    private function resolveAvailabilityOccurrenceForBookingSlot(
         int $doctorId,
         Carbon $slotStartAt,
         Carbon $slotEndAt
-    ): ?DoctorAvailability {
+    ): ?array {
         $availabilities = DoctorAvailability::query()
             ->where('doctors_id', $doctorId)
             ->where('status', 'available')
-            ->get(['id', 'date', 'start_time', 'end_time', 'ends_next_day', 'max_reps_per_hour']);
+            ->get(['id', 'date', 'start_time', 'end_time', 'ends_next_day', 'max_reps_per_range']);
 
         foreach ($availabilities as $availability) {
-            if ($this->availabilityCoversSlot($availability, $slotStartAt, $slotEndAt)) {
-                return $availability;
+            $interval = $this->resolveAvailabilityOccurrenceInterval($availability, $slotStartAt, $slotEndAt);
+            if ($interval !== null) {
+                return [
+                    'availability' => $availability,
+                    'start_at' => $interval['start_at'],
+                    'end_at' => $interval['end_at'],
+                ];
             }
         }
 
         return null;
     }
 
-    private function hasRemainingHourlyCapacity(
+    private function hasRemainingRangeCapacity(
         int $doctorId,
-        string $date,
-        Carbon $slotStartAt,
-        int $maxRepsPerHour
+        Carbon $rangeStartAt,
+        Carbon $rangeEndAt,
+        int $maxRepsPerRange
     ): bool {
-        $hourlyLimit = in_array($maxRepsPerHour, [1, 2], true) ? $maxRepsPerHour : 2;
-        $targetHour = $slotStartAt->copy()->setTimezone(self::BOOKING_TIMEZONE)->format('H');
+        $rangeLimit = max(1, $maxRepsPerRange);
+        $rangeStartDate = $rangeStartAt->copy()->setTimezone(self::BOOKING_TIMEZONE)->toDateString();
+        $rangeEndDate = $rangeEndAt->copy()->setTimezone(self::BOOKING_TIMEZONE)->toDateString();
 
-        $activeHourlyVisits = DB::table('appointments')
+        $candidateAppointments = Appointment::query()
             ->where('doctors_id', $doctorId)
-            ->whereDate('date', $date)
             ->whereIn('status', ['pending', 'confirmed'])
-            ->pluck('start_time')
-            ->filter(function ($startTime) use ($targetHour) {
-                return substr((string) $startTime, 0, 2) === $targetHour;
+            ->whereDate('date', '>=', $rangeStartDate)
+            ->whereDate('date', '<=', $rangeEndDate)
+            ->get(['date', 'start_time', 'end_time']);
+
+        $activeVisitsInRange = $candidateAppointments
+            ->filter(function ($appointment) use ($rangeStartAt, $rangeEndAt) {
+                try {
+                    $rawAppointmentDate = (string) $appointment->getRawOriginal('date');
+                    $rawStartTime = (string) $appointment->getRawOriginal('start_time');
+                    $rawEndTime = (string) $appointment->getRawOriginal('end_time');
+
+                    $appointmentDate = Carbon::parse($rawAppointmentDate, self::BOOKING_TIMEZONE)
+                        ->toDateString();
+                    $appointmentStartAt = Carbon::createFromFormat(
+                        'Y-m-d H:i:s',
+                        $appointmentDate . ' ' . $rawStartTime,
+                        self::BOOKING_TIMEZONE
+                    );
+                    $appointmentEndAt = Carbon::createFromFormat(
+                        'Y-m-d H:i:s',
+                        $appointmentDate . ' ' . $rawEndTime,
+                        self::BOOKING_TIMEZONE
+                    );
+                } catch (\Throwable $exception) {
+                    return false;
+                }
+
+                if ($appointmentEndAt->lessThanOrEqualTo($appointmentStartAt)) {
+                    $appointmentEndAt->addDay();
+                }
+
+                return $appointmentStartAt->greaterThanOrEqualTo($rangeStartAt)
+                    && $appointmentEndAt->lessThanOrEqualTo($rangeEndAt);
             })
             ->count();
 
-        return $activeHourlyVisits < $hourlyLimit;
+        return $activeVisitsInRange < $rangeLimit;
     }
 
-    private function availabilityCoversSlot(
+    private function resolveAvailabilityOccurrenceInterval(
         DoctorAvailability $availability,
         Carbon $slotStartAt,
         Carbon $slotEndAt
-    ): bool {
+    ): ?array {
         $anchorDates = [
             $slotStartAt->copy()->startOfDay(),
             $slotStartAt->copy()->subDay()->startOfDay(),
@@ -552,11 +587,19 @@ class RepsController extends Controller
                 $slotStartAt->greaterThanOrEqualTo($availabilityInterval['start_at'])
                 && $slotEndAt->lessThanOrEqualTo($availabilityInterval['end_at'])
             ) {
-                return true;
+                return $availabilityInterval;
             }
         }
 
-        return false;
+        return null;
+    }
+
+    private function availabilityCoversSlot(
+        DoctorAvailability $availability,
+        Carbon $slotStartAt,
+        Carbon $slotEndAt
+    ): bool {
+        return $this->resolveAvailabilityOccurrenceInterval($availability, $slotStartAt, $slotEndAt) !== null;
     }
 
     private function availabilityMatchesAnchorDate(string $availabilityDate, Carbon $anchorDate): bool
