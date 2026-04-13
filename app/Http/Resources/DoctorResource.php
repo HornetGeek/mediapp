@@ -12,6 +12,7 @@ class DoctorResource extends JsonResource
 {
     private const TIMEZONE = 'Africa/Cairo';
     private const DATE_FORMAT = 'Y-m-d';
+    private const TIMES_BOOKED_FORWARD_DAYS = 30;
 
     /**
      * Transform the resource into an array.
@@ -24,31 +25,63 @@ class DoctorResource extends JsonResource
         $doctorBusyStatus = app(DoctorBusyStatusService::class);
         $busyPeriod = $doctorBusyStatus->buildBusyPeriodPayload($this->resource);
         $targetDate = $this->resolveTargetDate($request);
-        $targetDateObject = Carbon::createFromFormat(self::DATE_FORMAT, $targetDate, self::TIMEZONE);
+        $targetDateObject = Carbon::createFromFormat(self::DATE_FORMAT, $targetDate, self::TIMEZONE)->startOfDay();
+        $timesBookedAnchorDate = $targetDateObject->copy();
+        $timesBookedWindowStart = $timesBookedAnchorDate->copy();
+        $timesBookedWindowEnd = $timesBookedAnchorDate->copy()->addDays(self::TIMES_BOOKED_FORWARD_DAYS + 1)->startOfDay();
+        $targetDateWindowStart = $targetDateObject->copy()->startOfDay();
+        $targetDateWindowEnd = $targetDateWindowStart->copy()->addDay();
         $activeStatuses = ['pending', 'confirmed'];
+        $candidateAppointmentsStartDate = $timesBookedWindowStart->copy()->subDay()->toDateString();
+        $candidateAppointmentsEndDate = $timesBookedWindowEnd->toDateString();
 
-        $bookedAppointments = Appointment::query()
+        $candidateAppointments = Appointment::query()
             ->where('doctors_id', $this->id)
-            ->whereDate('date', $targetDate)
             ->whereIn('status', $activeStatuses)
+            ->whereDate('date', '>=', $candidateAppointmentsStartDate)
+            ->whereDate('date', '<', $candidateAppointmentsEndDate)
+            ->orderBy('date')
             ->orderBy('start_time')
             ->get(['date', 'start_time', 'end_time']);
 
-        $bookedIntervals = $bookedAppointments
-            ->map(function ($appointment) use ($targetDateObject) {
-                $startAt = $this->buildDateTimeFromTime($targetDateObject, (string) $appointment->getRawOriginal('start_time'));
-                $endAt = $this->buildDateTimeFromTime($targetDateObject, (string) $appointment->getRawOriginal('end_time'));
+        $bookedIntervalsForTargetDate = collect();
+        $timesBookedEntries = collect();
 
-                if ($startAt === null || $endAt === null) {
-                    return null;
-                }
+        foreach ($candidateAppointments as $appointment) {
+            $appointmentInterval = $this->buildAppointmentInterval($appointment);
+            if ($appointmentInterval === null) {
+                continue;
+            }
 
-                return [
-                    'start_at' => $startAt,
-                    'end_at' => $endAt,
-                ];
+            if ($this->intervalsOverlap(
+                $appointmentInterval['start_at'],
+                $appointmentInterval['end_at'],
+                $timesBookedWindowStart,
+                $timesBookedWindowEnd
+            )) {
+                $timesBookedEntries->push([
+                    'appointment' => $appointment,
+                    'start_at' => $appointmentInterval['start_at'],
+                ]);
+            }
+
+            if ($this->intervalsOverlap(
+                $appointmentInterval['start_at'],
+                $appointmentInterval['end_at'],
+                $targetDateWindowStart,
+                $targetDateWindowEnd
+            )) {
+                $bookedIntervalsForTargetDate->push([
+                    'start_at' => $appointmentInterval['start_at'],
+                    'end_at' => $appointmentInterval['end_at'],
+                ]);
+            }
+        }
+
+        $timesBookedEntries = $timesBookedEntries
+            ->sortBy(function (array $entry) {
+                return $entry['start_at']->timestamp;
             })
-            ->filter()
             ->values();
 
         $availableTimes = $this->relationLoaded('availableTimes')
@@ -65,10 +98,20 @@ class DoctorResource extends JsonResource
                     (int) $availability->id
                 );
             })
-            ->map(function ($availability) use ($targetDateObject, $bookedIntervals) {
-                $availabilityInterval = $this->buildAvailabilityIntervalForDate($availability, $targetDateObject);
-                $isBookedForDate = $availabilityInterval !== null
-                    && $this->hasBookedOverlap($availabilityInterval['start_at'], $availabilityInterval['end_at'], $bookedIntervals);
+            ->map(function ($availability) use ($targetDateObject, $bookedIntervalsForTargetDate) {
+                $availabilityIntervals = $this->buildAvailabilityIntervalsForTargetDate($availability, $targetDateObject);
+                $isBookedForDate = false;
+
+                foreach ($availabilityIntervals as $availabilityInterval) {
+                    if ($this->hasBookedOverlap(
+                        $availabilityInterval['start_at'],
+                        $availabilityInterval['end_at'],
+                        $bookedIntervalsForTargetDate
+                    )) {
+                        $isBookedForDate = true;
+                        break;
+                    }
+                }
 
                 $availability->setAttribute('is_booked_for_date', $isBookedForDate);
 
@@ -85,12 +128,14 @@ class DoctorResource extends JsonResource
             'address_1' => $this->address_1,
             'booked_for_date' => $targetDate,
             'available_times' => AppAvailableTimeResource::collection($availableTimes),
-            'times_booked' => $bookedAppointments
-                ->map(function ($appointment) {
+            'times_booked' => $timesBookedEntries
+                ->map(function (array $entry) {
+                    $appointment = $entry['appointment'];
+
                     return [
-                        'date' => Carbon::parse($appointment->date)->format('Y-m-d'),
-                        'start_time' => Carbon::parse($appointment->start_time)->format('h:i A'),
-                        'end_time' => Carbon::parse($appointment->end_time)->format('h:i A'),
+                        'date' => $this->formatStoredDate((string) $appointment->getRawOriginal('date')),
+                        'start_time' => $this->formatStoredTime((string) $appointment->getRawOriginal('start_time')),
+                        'end_time' => $this->formatStoredTime((string) $appointment->getRawOriginal('end_time')),
                     ];
                 }),
             'is_fav' => $this->favoredByReps->isNotEmpty() ? (bool) $this->favoredByReps->first()->pivot->is_fav : false,
@@ -192,21 +237,21 @@ class DoctorResource extends JsonResource
         return $date->copy()->setTime($timeParts[0], $timeParts[1], $timeParts[2]);
     }
 
-    private function buildAvailabilityIntervalForDate($availability, Carbon $targetDate): ?array
+    private function buildAppointmentInterval($appointment): ?array
     {
-        if (!$this->availabilityMatchesTargetDate((string) $availability->date, $targetDate)) {
+        $rawDate = trim((string) $appointment->getRawOriginal('date'));
+        $appointmentDate = $this->parseStoredDate($rawDate);
+        if ($appointmentDate === null) {
             return null;
         }
 
-        $startAt = $this->buildDateTimeFromTime($targetDate, (string) $availability->start_time);
-        $endAt = $this->buildDateTimeFromTime($targetDate, (string) $availability->end_time);
+        $startAt = $this->buildDateTimeFromTime($appointmentDate, (string) $appointment->getRawOriginal('start_time'));
+        $endAt = $this->buildDateTimeFromTime($appointmentDate, (string) $appointment->getRawOriginal('end_time'));
         if ($startAt === null || $endAt === null) {
             return null;
         }
 
-        $isOvernight = (bool) $availability->ends_next_day
-            || ((string) $availability->end_time <= (string) $availability->start_time);
-        if ($isOvernight) {
+        if ($endAt->lessThanOrEqualTo($startAt)) {
             $endAt->addDay();
         }
 
@@ -214,6 +259,67 @@ class DoctorResource extends JsonResource
             'start_at' => $startAt,
             'end_at' => $endAt,
         ];
+    }
+
+    private function buildAvailabilityIntervalsForTargetDate($availability, Carbon $targetDate): array
+    {
+        $intervals = [];
+        $targetDateInterval = $this->buildAvailabilityIntervalForAnchorDate($availability, $targetDate);
+        if ($targetDateInterval !== null) {
+            $intervals[] = $targetDateInterval;
+        }
+
+        if ($this->isOvernightAvailability($availability)) {
+            $previousDate = $targetDate->copy()->subDay();
+            $previousDateInterval = $this->buildAvailabilityIntervalForAnchorDate($availability, $previousDate);
+            if ($previousDateInterval !== null
+                && $previousDateInterval['end_at']->greaterThan($targetDate->copy()->startOfDay())
+            ) {
+                $intervals[] = $previousDateInterval;
+            }
+        }
+
+        return $intervals;
+    }
+
+    private function buildAvailabilityIntervalForAnchorDate($availability, Carbon $anchorDate): ?array
+    {
+        if (!$this->availabilityMatchesTargetDate((string) $availability->date, $anchorDate)) {
+            return null;
+        }
+
+        $startAt = $this->buildDateTimeFromTime($anchorDate, (string) $availability->start_time);
+        $endAt = $this->buildDateTimeFromTime($anchorDate, (string) $availability->end_time);
+        if ($startAt === null || $endAt === null) {
+            return null;
+        }
+
+        if ($this->isOvernightAvailability($availability)) {
+            $endAt->addDay();
+        }
+
+        return [
+            'start_at' => $startAt,
+            'end_at' => $endAt,
+        ];
+    }
+
+    private function isOvernightAvailability($availability): bool
+    {
+        if ((bool) $availability->ends_next_day) {
+            return true;
+        }
+
+        $startTimeParts = $this->parseStoredTime((string) $availability->start_time);
+        $endTimeParts = $this->parseStoredTime((string) $availability->end_time);
+        if ($startTimeParts === null || $endTimeParts === null) {
+            return false;
+        }
+
+        $startSeconds = ($startTimeParts[0] * 3600) + ($startTimeParts[1] * 60) + $startTimeParts[2];
+        $endSeconds = ($endTimeParts[0] * 3600) + ($endTimeParts[1] * 60) + $endTimeParts[2];
+
+        return $endSeconds <= $startSeconds;
     }
 
     private function availabilityMatchesTargetDate(string $availabilityDate, Carbon $targetDate): bool
@@ -246,17 +352,42 @@ class DoctorResource extends JsonResource
             $appointmentStartAt = $interval['start_at'];
             $appointmentEndAt = $interval['end_at'];
 
-            $hasOverlap = (
-                $appointmentStartAt->lessThan($slotEndAt)
-                && $appointmentEndAt->greaterThan($slotStartAt)
-            ) || $appointmentStartAt->equalTo($slotStartAt);
-
-            if ($hasOverlap) {
+            if ($this->intervalsOverlap($appointmentStartAt, $appointmentEndAt, $slotStartAt, $slotEndAt)) {
                 return true;
             }
         }
 
         return false;
+    }
+
+    private function intervalsOverlap(
+        Carbon $firstStartAt,
+        Carbon $firstEndAt,
+        Carbon $secondStartAt,
+        Carbon $secondEndAt
+    ): bool {
+        return $firstStartAt->lessThan($secondEndAt) && $firstEndAt->greaterThan($secondStartAt);
+    }
+
+    private function formatStoredDate(string $date): string
+    {
+        $trimmedDate = trim($date);
+        $parsedDate = $this->parseStoredDate($trimmedDate);
+        if ($parsedDate !== null) {
+            return $parsedDate->format(self::DATE_FORMAT);
+        }
+
+        return $trimmedDate;
+    }
+
+    private function formatStoredTime(string $time): string
+    {
+        $trimmedTime = trim($time);
+        try {
+            return Carbon::parse($trimmedTime)->format('h:i A');
+        } catch (\Throwable $exception) {
+            return $trimmedTime;
+        }
     }
 
     private function parseStoredTime(string $time): ?array
@@ -267,5 +398,19 @@ class DoctorResource extends JsonResource
         }
 
         return [(int) $matches[1], (int) $matches[2], (int) $matches[3]];
+    }
+
+    private function parseStoredDate(string $date): ?Carbon
+    {
+        $trimmedDate = trim($date);
+        if ($trimmedDate === '') {
+            return null;
+        }
+
+        try {
+            return Carbon::parse($trimmedDate, self::TIMEZONE);
+        } catch (\Throwable $exception) {
+            return null;
+        }
     }
 }
