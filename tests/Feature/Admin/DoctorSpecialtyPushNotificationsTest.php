@@ -74,6 +74,7 @@ class DoctorSpecialtyPushNotificationsTest extends TestCase
         $campaign = PushNotificationCampaign::firstOrFail();
         $this->assertSame($admin->id, $campaign->sender_user_id);
         $this->assertSame($cardiology->id, $campaign->specialty_id);
+        $this->assertSame('both', $campaign->delivery_type);
         $this->assertSame(2, $campaign->total_doctors);
         $this->assertSame(1, $campaign->sent_count);
         $this->assertSame(0, $campaign->failed_count);
@@ -271,6 +272,67 @@ class DoctorSpecialtyPushNotificationsTest extends TestCase
         $this->assertSame(2, Notification::count());
     }
 
+    public function test_push_only_delivery_sends_fcm_without_creating_in_app_notifications(): void
+    {
+        $admin = $this->createUser('admin');
+        $specialty = Specialty::create(['name' => 'Cardiology']);
+        $this->createDoctor($specialty->id, 'push-token', 'push-only@example.com');
+
+        $firebase = Mockery::mock(FirebaseNotificationService::class);
+        $firebase->shouldReceive('sendNotification')
+            ->once()
+            ->with(
+                'push-token',
+                'Push Only',
+                'This should not appear in app.',
+                Mockery::on(fn (array $data) => ($data['delivery_type'] ?? null) === 'push_only'),
+                null
+            )
+            ->andReturn(['name' => 'push-only']);
+        $this->app->instance(FirebaseNotificationService::class, $firebase);
+
+        $this->actingAs($admin)->post('/admin/push-notifications/send', [
+            'specialty_id' => $specialty->id,
+            'title' => 'Push Only',
+            'body' => 'This should not appear in app.',
+            'delivery_type' => 'push_only',
+            'display_type' => 'modal',
+        ])->assertRedirect(route('admin.push-notifications.index'));
+
+        $campaign = PushNotificationCampaign::firstOrFail();
+        $this->assertSame('push_only', $campaign->delivery_type);
+        $this->assertSame('list', $campaign->display_type);
+        $this->assertSame(1, $campaign->sent_count);
+        $this->assertSame(0, Notification::count());
+    }
+
+    public function test_in_app_only_delivery_creates_notifications_without_sending_fcm(): void
+    {
+        $admin = $this->createUser('admin');
+        $specialty = Specialty::create(['name' => 'Cardiology']);
+        $doctor = $this->createDoctor($specialty->id, 'in-app-token', 'in-app-only@example.com');
+
+        $firebase = Mockery::mock(FirebaseNotificationService::class);
+        $firebase->shouldReceive('sendNotification')->never();
+        $this->app->instance(FirebaseNotificationService::class, $firebase);
+
+        $this->actingAs($admin)->post('/admin/push-notifications/send', [
+            'specialty_id' => $specialty->id,
+            'title' => 'In App Only',
+            'body' => 'This should only appear in app.',
+            'delivery_type' => 'in_app_only',
+            'display_type' => 'modal',
+        ])->assertRedirect(route('admin.push-notifications.index'));
+
+        $campaign = PushNotificationCampaign::firstOrFail();
+        $this->assertSame('in_app_only', $campaign->delivery_type);
+        $this->assertSame(0, $campaign->sent_count);
+
+        $notification = Notification::where('notifiable_id', $doctor->id)->firstOrFail();
+        $this->assertSame('modal', $notification->display_type);
+        $this->assertSame('In App Only', $notification->title);
+    }
+
     public function test_validation_errors_are_returned_for_missing_payload(): void
     {
         $admin = $this->createUser('admin');
@@ -319,6 +381,29 @@ class DoctorSpecialtyPushNotificationsTest extends TestCase
                 'title' => 'Long Video',
                 'body' => 'Invalid video payload.',
                 'video' => UploadedFile::fake()->create('long.mp4', 1024, 'video/mp4'),
+            ]);
+
+        $response->assertRedirect('/admin/push-notifications');
+        $response->assertSessionHasErrors('video');
+    }
+
+    public function test_push_only_delivery_rejects_video_upload(): void
+    {
+        $admin = $this->createUser('admin');
+        $specialty = Specialty::create(['name' => 'Cardiology']);
+
+        $duration = Mockery::mock(VideoDurationService::class);
+        $duration->shouldReceive('validateMaxDuration')->never();
+        $this->app->instance(VideoDurationService::class, $duration);
+
+        $response = $this->actingAs($admin)
+            ->from('/admin/push-notifications')
+            ->post('/admin/push-notifications/send', [
+                'specialty_id' => $specialty->id,
+                'title' => 'Push Video',
+                'body' => 'Invalid delivery for video.',
+                'delivery_type' => 'push_only',
+                'video' => UploadedFile::fake()->create('notice.mp4', 1024, 'video/mp4'),
             ]);
 
         $response->assertRedirect('/admin/push-notifications');
@@ -461,6 +546,7 @@ class DoctorSpecialtyPushNotificationsTest extends TestCase
             $table->enum('display_type', ['list', 'modal'])->default('list');
             $table->boolean('is_skippable')->default(true);
             $table->enum('media_type', ['none', 'image', 'video'])->default('none');
+            $table->enum('delivery_type', ['both', 'push_only', 'in_app_only'])->default('both');
             $table->unsignedInteger('total_doctors')->default(0);
             $table->unsignedInteger('sent_count')->default(0);
             $table->unsignedInteger('failed_count')->default(0);

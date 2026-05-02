@@ -24,13 +24,18 @@ class DoctorSpecialtyPushNotificationService
         ?string $imagePath = null,
         ?string $videoPath = null,
         string $displayType = 'list',
-        bool $isSkippable = true
+        bool $isSkippable = true,
+        string $deliveryType = 'both'
     ): PushNotificationCampaign
     {
         $imageUrl = $imagePath ? Storage::disk('public')->url($imagePath) : null;
         $videoUrl = $videoPath ? Storage::disk('public')->url($videoPath) : null;
         $mediaType = $videoUrl ? 'video' : ($imageUrl ? 'image' : 'none');
+        $deliveryType = in_array($deliveryType, ['both', 'push_only', 'in_app_only'], true) ? $deliveryType : 'both';
         $displayType = $displayType === 'modal' ? 'modal' : 'list';
+        if ($deliveryType === 'push_only') {
+            $displayType = 'list';
+        }
         $isSkippable = $displayType === 'modal' ? $isSkippable : true;
 
         $campaign = PushNotificationCampaign::create([
@@ -43,6 +48,7 @@ class DoctorSpecialtyPushNotificationService
             'display_type' => $displayType,
             'is_skippable' => $isSkippable,
             'media_type' => $mediaType,
+            'delivery_type' => $deliveryType,
             'total_doctors' => 0,
             'sent_count' => 0,
             'failed_count' => 0,
@@ -55,28 +61,30 @@ class DoctorSpecialtyPushNotificationService
         Doctors::query()
             ->where('specialty_id', $specialtyId)
             ->orderBy('id')
-            ->chunkById(100, function ($doctors) use ($campaign, $specialtyId, $title, $body, $imageUrl, $videoUrl, $mediaType, $displayType, $isSkippable, &$totalDoctors, &$sentCount, &$failedCount) {
+            ->chunkById(100, function ($doctors) use ($campaign, $specialtyId, $title, $body, $imageUrl, $videoUrl, $mediaType, $displayType, $isSkippable, $deliveryType, &$totalDoctors, &$sentCount, &$failedCount) {
                 foreach ($doctors as $doctor) {
                     $totalDoctors++;
                     $dedupeKey = sprintf('admin_specialty_push:%d:doctor:%d', (int) $campaign->id, (int) $doctor->id);
 
-                    Notification::create([
-                        'title' => $title,
-                        'body' => $body,
-                        'image_url' => $imageUrl,
-                        'video_url' => $videoUrl,
-                        'media_type' => $mediaType,
-                        'display_type' => $displayType,
-                        'is_skippable' => $isSkippable,
-                        'is_read' => false,
-                        'target_type' => 'doctor',
-                        'dedupe_key' => $dedupeKey,
-                        'dedupe_fingerprint' => $this->buildDedupeFingerprint(Doctors::class, (int) $doctor->id, $dedupeKey),
-                        'notifiable_id' => $doctor->id,
-                        'notifiable_type' => Doctors::class,
-                    ]);
+                    if ($deliveryType !== 'push_only') {
+                        Notification::create([
+                            'title' => $title,
+                            'body' => $body,
+                            'image_url' => $imageUrl,
+                            'video_url' => $videoUrl,
+                            'media_type' => $mediaType,
+                            'display_type' => $displayType,
+                            'is_skippable' => $isSkippable,
+                            'is_read' => false,
+                            'target_type' => 'doctor',
+                            'dedupe_key' => $dedupeKey,
+                            'dedupe_fingerprint' => $this->buildDedupeFingerprint(Doctors::class, (int) $doctor->id, $dedupeKey),
+                            'notifiable_id' => $doctor->id,
+                            'notifiable_type' => Doctors::class,
+                        ]);
+                    }
 
-                    if (empty($doctor->fcm_token)) {
+                    if ($deliveryType === 'in_app_only' || empty($doctor->fcm_token)) {
                         continue;
                     }
 
@@ -90,6 +98,7 @@ class DoctorSpecialtyPushNotificationService
                                 'target_type' => 'doctor',
                                 'specialty_id' => $specialtyId,
                                 'campaign_id' => $campaign->id,
+                                'delivery_type' => $deliveryType,
                                 'display_type' => $displayType,
                                 'is_skippable' => $isSkippable ? '1' : '0',
                                 'media_type' => $mediaType,
