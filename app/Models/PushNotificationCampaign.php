@@ -19,6 +19,7 @@ class PushNotificationCampaign extends Model
         'display_type',
         'is_skippable',
         'media_type',
+        'delivery_type',
         'total_doctors',
         'sent_count',
         'failed_count',

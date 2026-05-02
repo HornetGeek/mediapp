@@ -65,6 +65,18 @@
                             </div>
 
                             <div class="form-group mb-3">
+                                <label class="form-label">Delivery Type</label>
+                                <select name="delivery_type" class="form-select @error('delivery_type') is-invalid @enderror" required>
+                                    <option value="both" {{ old('delivery_type', 'both') === 'both' ? 'selected' : '' }}>Push + In-app</option>
+                                    <option value="push_only" {{ old('delivery_type') === 'push_only' ? 'selected' : '' }}>Push only</option>
+                                    <option value="in_app_only" {{ old('delivery_type') === 'in_app_only' ? 'selected' : '' }}>In-app only</option>
+                                </select>
+                                @error('delivery_type')
+                                    <div class="alert alert-danger mt-2">{{ $message }}</div>
+                                @enderror
+                            </div>
+
+                            <div class="form-group mb-3">
                                 <label class="form-label">Image</label>
                                 <input type="file" name="image" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
                                     class="form-control @error('image') is-invalid @enderror">
@@ -122,6 +134,7 @@
                                         <th>#</th>
                                         <th>Title</th>
                                         <th>Specialty</th>
+                                        <th>Delivery</th>
                                         <th>Display</th>
                                         <th>Media</th>
                                         <th>Total</th>
@@ -139,6 +152,10 @@
                                                 <small class="text-muted">{{ \Illuminate\Support\Str::limit($campaign->body, 70) }}</small>
                                             </td>
                                             <td>{{ $campaign->specialty?->name ?? '---' }}</td>
+                                            <td>
+                                                @php($deliveryLabels = ['both' => 'Push + In-app', 'push_only' => 'Push only', 'in_app_only' => 'In-app only'])
+                                                <span class="badge bg-primary">{{ $deliveryLabels[$campaign->delivery_type ?? 'both'] ?? 'Push + In-app' }}</span>
+                                            </td>
                                             <td>
                                                 <span class="badge bg-{{ $campaign->display_type === 'modal' ? 'warning' : 'secondary' }}">
                                                     {{ ucfirst($campaign->display_type ?? 'list') }}
@@ -163,7 +180,7 @@
                                         </tr>
                                     @empty
                                         <tr>
-                                            <td colspan="8" class="text-center">No campaigns sent yet.</td>
+                                            <td colspan="10" class="text-center">No campaigns sent yet.</td>
                                         </tr>
                                     @endforelse
                                 </tbody>
