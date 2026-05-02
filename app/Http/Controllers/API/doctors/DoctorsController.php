@@ -447,7 +447,7 @@ class DoctorsController extends Controller
         $perPage = (int) $request->input('per_page', 10);
         $doctor = $this->refreshDoctorAppointments($statusRefresh);
 
-        $appointments = Appointment::with(['representative', 'doctor', 'company'])
+        $appointments = Appointment::with(['representative', 'doctor', 'company', 'companyCatalog'])
             ->where('doctors_id', $doctor)
             ->when($request->filled('status'), function ($query) use ($request) {
                 $query->where('status', $request->status);
@@ -464,6 +464,9 @@ class DoctorsController extends Controller
                 $query->where(function ($searchQuery) use ($searchTerm) {
                     $searchQuery->where('appointment_code', 'like', $searchTerm)
                         ->orWhereHas('company', function ($companyQuery) use ($searchTerm) {
+                            $companyQuery->where('name', 'like', $searchTerm);
+                        })
+                        ->orWhereHas('companyCatalog', function ($companyQuery) use ($searchTerm) {
                             $companyQuery->where('name', 'like', $searchTerm);
                         })
                         ->orWhereHas('representative', function ($representativeQuery) use ($searchTerm) {
@@ -549,7 +552,7 @@ class DoctorsController extends Controller
 
         $filters = $request->only(['name']);
 
-        $searched = Appointment::with(['representative', 'company'])
+        $searched = Appointment::with(['representative', 'company', 'companyCatalog'])
             ->where('doctors_id', $doctor)
             ->filter($filters)
             ->orderBy('date', 'asc')
@@ -989,7 +992,7 @@ class DoctorsController extends Controller
         $perPage = (int) $request->input('per_page', 10);
         $doctor = $this->refreshDoctorAppointments($statusRefresh);
 
-        $appointments = Appointment::with(['representative', 'doctor'])
+        $appointments = Appointment::with(['representative', 'doctor', 'company', 'companyCatalog'])
             ->where('doctors_id', $doctor)
             ->where('status', 'cancelled')
             ->orderBy('date', 'asc')
@@ -1022,7 +1025,7 @@ class DoctorsController extends Controller
         $perPage = (int) $request->input('per_page', 10);
         $doctor = $this->refreshDoctorAppointments($statusRefresh);
 
-        $appointments = Appointment::with(['representative', 'doctor'])
+        $appointments = Appointment::with(['representative', 'doctor', 'company', 'companyCatalog'])
             ->where('doctors_id', $doctor)
             ->where('status', 'pending')
             ->orderBy('date', 'asc')
@@ -1055,7 +1058,7 @@ class DoctorsController extends Controller
         $perPage = (int) $request->input('per_page', 10);
         $doctor = $this->refreshDoctorAppointments($statusRefresh);
 
-        $appointments = Appointment::with(['representative', 'doctor'])
+        $appointments = Appointment::with(['representative', 'doctor', 'company', 'companyCatalog'])
             ->where('doctors_id', $doctor)
             ->where('status', 'confirmed')
             ->orderBy('date', 'asc')

@@ -52,7 +52,7 @@ class RepsController extends Controller
                 ? (string) $request->input('date')
                 : Carbon::now(self::BOOKING_TIMEZONE)->toDateString();
 
-            $rep->load(['company', 'areas', 'lines']);
+            $rep->load(['company', 'companyCatalog', 'areas', 'lines']);
 
             $dailyVisitsLimit = $this->resolveRepresentativeDailyVisitsLimit($rep);
             $usedVisitsToday = $this->countUsedVisitsForDate($representativeId, $targetDate);
@@ -101,7 +101,7 @@ class RepsController extends Controller
         $dailyVisitsLimit = $this->resolveRepresentativeDailyVisitsLimit($rep);
         $usedVisitsToday = $this->countUsedVisitsForDate($representativeId, $targetDate);
         $remainingVisitsToday = max(0, $dailyVisitsLimit - $usedVisitsToday);
-        $consumedAppointments = Appointment::with(['doctor.specialty', 'representative', 'company'])
+        $consumedAppointments = Appointment::with(['doctor.specialty', 'representative', 'company', 'companyCatalog'])
             ->where('representative_id', $representativeId)
             ->whereDate('date', $targetDate)
             ->whereIn('status', ['pending', 'confirmed'])
@@ -174,9 +174,11 @@ class RepsController extends Controller
                 $q->where(function ($sub) use ($representative) {
                     $sub->where('blockable_type', Representative::class)
                         ->where('blockable_id', $representative->id);
-                })->orWhere(function ($sub) use ($representative) {
-                    $sub->where('blockable_type', Company::class)
-                        ->where('blockable_id', $representative->company_id);
+                })->when($representative->company_id !== null, function ($blockedQuery) use ($representative) {
+                    $blockedQuery->orWhere(function ($sub) use ($representative) {
+                        $sub->where('blockable_type', Company::class)
+                            ->where('blockable_id', $representative->company_id);
+                    });
                 });
             })
             ->when($request->filled('search'), function ($query) use ($request) {
@@ -277,9 +279,11 @@ class RepsController extends Controller
                     $q2->where('blockable_type', 'representative')
                         ->where('blockable_id', $rep->id);
                 })
-                    ->orWhere(function ($q2) use ($rep) {
-                        $q2->where('blockable_type', 'company')
-                            ->where('blockable_id', $rep->company_id);
+                    ->when($rep->company_id !== null, function ($blockedQuery) use ($rep) {
+                        $blockedQuery->orWhere(function ($q2) use ($rep) {
+                            $q2->where('blockable_type', 'company')
+                                ->where('blockable_id', $rep->company_id);
+                        });
                     });
             })
             ->paginate($perPage);
@@ -385,13 +389,13 @@ class RepsController extends Controller
             if ($block->blockable_type === 'App\Models\Representative' && $block->blockable_id == $representative->id) {
                 return ApiResponse::sendResponse(403, 'You are blocked by this doctor', []);
             }
-            if ($block->blockable_type === 'App\Models\Company' && $block->blockable_id == $representative->company_id) {
+            if ($representative->company_id !== null && $block->blockable_type === 'App\Models\Company' && $block->blockable_id == $representative->company_id) {
                 return ApiResponse::sendResponse(403, 'Your company is blocked by this doctor', []);
             }
         }
 
-        $company = Company::find($companyId);
-        if ($company->status === 'inactive') {
+        $company = $companyId === null ? null : Company::find($companyId);
+        if ($company && $company->status === 'inactive') {
             return ApiResponse::sendResponse(403, 'Your company is inactive. You cannot book appointments.', []);
         }
         $appointmentStatusWithDoctor = Appointment::where('doctors_id', $request->doctors_id)
@@ -426,7 +430,8 @@ class RepsController extends Controller
                 'end_time' => $slotEndTime,
                 'date' => $date,
                 'status' => "pending",
-                'company_id' => auth()->user()->company_id
+                'company_id' => $representative->company_id,
+                'company_catalog_id' => $representative->company_catalog_id,
 
             ]);
         } catch (QueryException $exception) {
@@ -436,7 +441,7 @@ class RepsController extends Controller
 
             throw $exception;
         }
-        $appointment->load(['doctor', 'representative', 'company']);
+        $appointment->load(['doctor', 'representative', 'company', 'companyCatalog']);
 
         $doctor = $appointment->doctor;
         $dateTime = $start->format('Y-m-d h:i a');
@@ -685,7 +690,7 @@ class RepsController extends Controller
         $perPage = (int) $request->input('per_page', 10);
         $rep = $this->refreshRepresentativeAppointments($statusRefresh);
 
-        $appointments = Appointment::with(['representative', 'doctor', 'company'])
+        $appointments = Appointment::with(['representative', 'doctor', 'company', 'companyCatalog'])
             ->where('representative_id', $rep)
             ->when($request->filled('status'), function ($query) use ($request) {
                 $query->where('status', $request->status);
@@ -934,9 +939,11 @@ class RepsController extends Controller
                 $q->where(function ($sub) use ($representative) {
                     $sub->where('blockable_type', Representative::class)
                         ->where('blockable_id', $representative->id);
-                })->orWhere(function ($sub) use ($representative) {
-                    $sub->where('blockable_type', Company::class)
-                        ->where('blockable_id', $representative->company_id);
+                })->when($representative->company_id !== null, function ($blockedQuery) use ($representative) {
+                    $blockedQuery->orWhere(function ($sub) use ($representative) {
+                        $sub->where('blockable_type', Company::class)
+                            ->where('blockable_id', $representative->company_id);
+                    });
                 });
             })
             ->paginate($perPage);
@@ -969,7 +976,7 @@ class RepsController extends Controller
         $perPage = (int) $request->input('per_page', 10);
         $representative = $this->refreshRepresentativeAppointments($statusRefresh);
 
-        $appointments = Appointment::with(['representative', 'doctor'])
+        $appointments = Appointment::with(['representative', 'doctor', 'company', 'companyCatalog'])
             ->where('representative_id', $representative)
             ->where('status', 'cancelled')
             ->orderBy('date', 'asc')
@@ -1002,7 +1009,7 @@ class RepsController extends Controller
         $perPage = (int) $request->input('per_page', 10);
         $representative = $this->refreshRepresentativeAppointments($statusRefresh);
 
-        $appointments = Appointment::with(['representative', 'doctor'])
+        $appointments = Appointment::with(['representative', 'doctor', 'company', 'companyCatalog'])
             ->where('representative_id', $representative)
             ->where('status', 'pending')
             ->orderBy('date', 'asc')
@@ -1035,7 +1042,7 @@ class RepsController extends Controller
         $perPage = (int) $request->input('per_page', 10);
         $representative = $this->refreshRepresentativeAppointments($statusRefresh);
 
-        $appointments = Appointment::with(['representative', 'doctor'])
+        $appointments = Appointment::with(['representative', 'doctor', 'company', 'companyCatalog'])
             ->where('representative_id', $representative)
             ->where('status', 'confirmed')
             ->orderBy('date', 'asc')
@@ -1068,7 +1075,7 @@ class RepsController extends Controller
         $perPage = (int) $request->input('per_page', 10);
         $representative = $this->refreshRepresentativeAppointments($statusRefresh);
 
-        $appointments = Appointment::with(['representative', 'doctor'])
+        $appointments = Appointment::with(['representative', 'doctor', 'company', 'companyCatalog'])
             ->where('representative_id', $representative)
             ->where('status', 'left')
             ->orderBy('date', 'asc')
@@ -1107,7 +1114,7 @@ class RepsController extends Controller
         $date = $request->input('date');
         $specialty_id = $request->input('specialty_id');
 
-        $appointments = Appointment::with(['representative', 'doctor'])
+        $appointments = Appointment::with(['representative', 'doctor', 'company', 'companyCatalog'])
             ->where('representative_id', $representative)
             ->when($date, function ($query, $date) {
                 $query->where('date', $date);
@@ -1147,7 +1154,7 @@ class RepsController extends Controller
         $perPage = (int) $request->input('per_page', 10);
         $representative = $this->refreshRepresentativeAppointments($statusRefresh);
 
-        $appointments = Appointment::with(['representative', 'doctor'])
+        $appointments = Appointment::with(['representative', 'doctor', 'company', 'companyCatalog'])
             ->where('representative_id', $representative)
             ->where('status', 'suspended')
             ->orderBy('date', 'asc')
@@ -1204,7 +1211,7 @@ class RepsController extends Controller
 
     private function resolveRepresentativeDailyVisitsLimit(Representative $representative): int
     {
-        return max(0, (int) ($representative->company->visits_per_day ?? 0));
+        return max(0, (int) ($representative->daily_visits_limit ?? $representative->company->visits_per_day ?? 0));
     }
 
     private function buildPaginationMeta($paginator): array

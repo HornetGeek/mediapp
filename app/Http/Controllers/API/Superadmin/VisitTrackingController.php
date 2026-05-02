@@ -34,7 +34,7 @@ class VisitTrackingController extends Controller
         }
 
         $perPage = (int) $request->input('per_page', 10);
-        $list_visits  = Appointment::with(['company', 'doctor.specialty', 'representative.company'])->where('status', 'confirmed')
+        $list_visits  = Appointment::with(['company', 'companyCatalog', 'doctor.specialty', 'representative.company', 'representative.companyCatalog'])->where('status', 'confirmed')
             ->orderBy('date', 'desc')
             ->paginate($perPage);
 
@@ -72,7 +72,7 @@ class VisitTrackingController extends Controller
         $filters = $request->only(['doctor_name', 'company_name', 'from_date', 'to_date']);
         $perPage = (int) $request->input('per_page', 10);
 
-        $query = Appointment::with(['company', 'doctor.specialty', 'representative.company'])
+        $query = Appointment::with(['company', 'companyCatalog', 'doctor.specialty', 'representative.company', 'representative.companyCatalog'])
             ->advancedFilter($filters)
             ->orderBy('date', 'desc')
             ->paginate($perPage);
@@ -109,7 +109,7 @@ class VisitTrackingController extends Controller
 
     public function generateVisitReportPDF($bookId)
     {
-        $data = Appointment::with(['doctor', 'representative', 'company'])->where('id', $bookId)->get();
+        $data = Appointment::with(['doctor', 'representative', 'company', 'companyCatalog'])->where('id', $bookId)->get();
 
         if ($data->isEmpty()) {
             return ApiResponse::sendResponse(404, 'No visits found', []);
@@ -252,7 +252,7 @@ class VisitTrackingController extends Controller
 
     private function getMonthlyReportData($month)
     {
-        return Appointment::with(['doctor', 'representative', 'company'])
+        return Appointment::with(['doctor', 'representative', 'company', 'companyCatalog'])
             ->whereMonth('date', $month->month)
             ->whereYear('date', $month->year)
             ->get();

@@ -1,6 +1,7 @@
 <?php
 
 use App\Helpers\ApiResponse;
+use App\Http\Controllers\API\BannerAdController;
 use App\Http\Controllers\API\Admin\AuthAdminController;
 use App\Http\Controllers\API\Admin\CompaniessController;
 use App\Http\Controllers\API\Admin\LinesController;
@@ -9,12 +10,14 @@ use App\Http\Controllers\API\doctors\AuthDoctorsController;
 use App\Http\Controllers\API\doctors\AvailableTimeController;
 use App\Http\Controllers\API\doctors\DoctorsController;
 use App\Http\Controllers\API\representatives\AuthRepController;
+use App\Http\Controllers\API\representatives\RepCompanyCatalogController;
 use App\Http\Controllers\API\representatives\RepFavoriteDoctorController;
 use App\Http\Controllers\API\representatives\RepsController;
 use App\Http\Controllers\API\Superadmin\AuthSuperAdminController;
 use App\Http\Controllers\API\Superadmin\CompaniesController;
 use App\Http\Controllers\API\Superadmin\MakeCompanyController;
 use App\Http\Controllers\API\Superadmin\MakeDoctorsController;
+use App\Http\Controllers\API\Superadmin\RepresentativeApprovalController;
 use App\Http\Controllers\API\Superadmin\VisitTrackingController;
 use App\Http\Controllers\Auth\ForgotPasswordCompanyController;
 use App\Http\Controllers\Auth\ForgotPasswordDoctorController;
@@ -50,6 +53,7 @@ use Illuminate\Support\Facades\Artisan;
 
 
 Route::post('/check-version', [AppVersionController::class, 'check']);
+Route::get('/banner-ads', [BannerAdController::class, 'index']);
 // ------------------ Auth SuperAdmin Routes
 
 
@@ -94,6 +98,12 @@ Route::prefix('super-admin')->group(function () {
             Route::get('specialities', 'get_Speciality');
             Route::get('doctors', 'getDoctors');
             Route::delete('delete-doctor/{doctor_id}', 'deleteDoctor');
+        });
+
+        Route::controller(RepresentativeApprovalController::class)->group(function () {
+            Route::get('reps/pending', 'pending');
+            Route::put('reps/{id}/approve', 'approve');
+            Route::put('reps/{id}/reject', 'reject');
         });
     });
 });
@@ -202,6 +212,8 @@ Route::prefix('company')->group(function () {
 
 // ------------------ Reps Routes
 Route::prefix('reps')->group(function () {
+    Route::get('companies', [RepCompanyCatalogController::class, 'index']);
+    Route::post('register', [AuthRepController::class, 'register']);
     Route::post('login', [AuthRepController::class, 'login']);
 
     Route::middleware(['auth:sanctum', 'ability:representative'])->group(function () {
@@ -210,36 +222,39 @@ Route::prefix('reps')->group(function () {
 
         Route::controller(RepsController::class)->group(function () {
             Route::get('profile', 'getRepsProfile');
-            Route::get('visits/balance', 'getVisitsBalance');
-            Route::get('specialities', 'get_Speciality');
-            Route::get('/doctors/all', 'getAvailableTimeForDoctor');
-            Route::get('/doctors/search', 'filterDoctors');
-            Route::get('/docotr/{id}', 'getDoctorProfile');
-            Route::post('/booking', 'bookAppointment');
-            Route::get('/booked/appointments', 'getRepsAppointments');
-            Route::put('/cancel-appointment/{book_id}', 'cancellationBooking');
-            Route::put('/completed-appointment/{book_id}', 'completedBooking');
-            Route::delete('/delete-appointment/{book_id}', 'deleteAppointment');
             Route::get('notifications', 'getNotifications');
             Route::put('/notifications/read', 'markAllNotificationsAsRead');
             Route::put('/notifications/{id}/read', 'markNotificationAsRead');
             Route::delete('/notifications/{id}', 'deleteNotification');
             Route::delete('/reps-notifications/clear', 'clearAllNotifications');
-            Route::get('appointments/by-status', 'getAppointmentsByStatus');
-            Route::put('appointment/change-status', 'changeAppointmentStatus');
-            Route::get('/doctorsBySpeciality', 'getDoctorsBySpeciality');
-            Route::get('/appointments/cancelled', 'getCancelledAppointments');
-            Route::get('/appointments/pending', 'getPendingAppointments');
-            Route::get('/appointments/confirmed', 'getConfirmedAppointments');
-            Route::get('/appointments/lefting', 'getLeftingAppointments');
-            Route::get('/appointments/filtration', 'filterAppointmentsByDateAndSpecialty');
-            Route::get('/appointments-beforTwo-days', 'getAppointmentsNowAndBeforeTwoDay');
-            Route::get('/appointments/suspended', 'getSuspendedAppointments');
+
+            Route::middleware('rep.active')->group(function () {
+                Route::get('visits/balance', 'getVisitsBalance');
+                Route::get('specialities', 'get_Speciality');
+                Route::get('/doctors/all', 'getAvailableTimeForDoctor');
+                Route::get('/doctors/search', 'filterDoctors');
+                Route::get('/docotr/{id}', 'getDoctorProfile');
+                Route::post('/booking', 'bookAppointment');
+                Route::get('/booked/appointments', 'getRepsAppointments');
+                Route::put('/cancel-appointment/{book_id}', 'cancellationBooking');
+                Route::put('/completed-appointment/{book_id}', 'completedBooking');
+                Route::delete('/delete-appointment/{book_id}', 'deleteAppointment');
+                Route::get('appointments/by-status', 'getAppointmentsByStatus');
+                Route::put('appointment/change-status', 'changeAppointmentStatus');
+                Route::get('/doctorsBySpeciality', 'getDoctorsBySpeciality');
+                Route::get('/appointments/cancelled', 'getCancelledAppointments');
+                Route::get('/appointments/pending', 'getPendingAppointments');
+                Route::get('/appointments/confirmed', 'getConfirmedAppointments');
+                Route::get('/appointments/lefting', 'getLeftingAppointments');
+                Route::get('/appointments/filtration', 'filterAppointmentsByDateAndSpecialty');
+                Route::get('/appointments-beforTwo-days', 'getAppointmentsNowAndBeforeTwoDay');
+                Route::get('/appointments/suspended', 'getSuspendedAppointments');
+            });
 
         });
 
         // Favorite Doctors
-        Route::controller(RepFavoriteDoctorController::class)->group(function () {
+        Route::middleware('rep.active')->controller(RepFavoriteDoctorController::class)->group(function () {
             Route::post('/add-favorite-doctor', 'addFavoriteDoctor');
             Route::delete('/remove-favorite-doctor', 'removeFavoriteDoctor');
             Route::get('/favorite-doctors', 'list');

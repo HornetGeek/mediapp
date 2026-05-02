@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Support\CompanyPayload;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -21,10 +22,7 @@ class VisitTrackingResource extends JsonResource
             'start_time' => Carbon::parse($this->start_time)->format('h:i A'),
             'end_time' => Carbon::parse($this->end_time)->format('h:i A'),
             'status' => $this->status,
-            'company' => [
-                'id' => $this->company->id,
-                'name' => $this->company->name,
-            ],
+            'company' => CompanyPayload::forAppointment($this->resource),
             'doctor' => [
                 'id' => $this->doctor->id,
                 'name' => $this->doctor->name,
@@ -33,7 +31,7 @@ class VisitTrackingResource extends JsonResource
             'representative' => [
                 'id' => $this->representative->id,
                 'name' => $this->representative->name,
-                'company name' => $this->representative->company->name,
+                'company name' => data_get(CompanyPayload::forRepresentative($this->representative), 'name'),
             ],
         ];
     }

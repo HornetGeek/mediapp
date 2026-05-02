@@ -14,6 +14,7 @@ class Appointment extends Model
         'doctors_id',
         'representative_id',
         'company_id',
+        'company_catalog_id',
         'date',
         'start_time',
         'end_time',
@@ -31,6 +32,11 @@ class Appointment extends Model
     public function company()
     {
         return $this->belongsTo(Company::class, 'company_id');
+    }
+
+    public function companyCatalog()
+    {
+        return $this->belongsTo(RepCompanyCatalog::class, 'company_catalog_id');
     }
 
     public function doctor()
@@ -64,6 +70,9 @@ class Appointment extends Model
                 })
                     ->orWhereHas('company', function ($q3) use ($name) {
                         $q3->where('name', 'like', "%{$name}%");
+                    })
+                    ->orWhereHas('companyCatalog', function ($q4) use ($name) {
+                        $q4->where('name', 'like', "%{$name}%");
                     });
             });
         }
@@ -88,8 +97,12 @@ class Appointment extends Model
 
         // filter by company name
         if (!empty($filters['company_name'])) {
-            $query->whereHas('company', function ($q) use ($filters) {
-                $q->where('name', 'like', '%' . $filters['company_name'] . '%');
+            $query->where(function ($q) use ($filters) {
+                $q->whereHas('company', function ($companyQuery) use ($filters) {
+                    $companyQuery->where('name', 'like', '%' . $filters['company_name'] . '%');
+                })->orWhereHas('companyCatalog', function ($catalogQuery) use ($filters) {
+                    $catalogQuery->where('name', 'like', '%' . $filters['company_name'] . '%');
+                });
             });
         }
 

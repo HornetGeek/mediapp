@@ -25,6 +25,12 @@
                         </a>
                     </li>
                     <li class="pc-item">
+                        <a href="{{ route('banner-ads.index') }}" class="pc-link">
+                            <span class="pc-micon"><i class="ti ti-ad"></i></span>
+                            <span class="pc-mtext">Banner Ads</span>
+                        </a>
+                    </li>
+                    <li class="pc-item">
                         <a href="{{ route('companies.index') }}" class="pc-link">
                             <span class="pc-micon"><i class="ti ti-building-skyscraper"></i></span>
                             <span class="pc-mtext">Companies</span>
@@ -48,53 +54,31 @@
                             <span class="pc-mtext">Visitis</span>
                         </a>
                     </li>
-                    
+                    <li class="pc-item">
+                        <a href="{{ route('notification-broadcasts.index') }}" class="pc-link">
+                            <span class="pc-micon"><i class="ti ti-bell"></i></span>
+                            <span class="pc-mtext">Push Notifications</span>
+                        </a>
+                    </li>
+
                 </ul>
             @endif
-            {{-- @if (Auth::user()->isAdmin())
-            <ul class="pc-navbar">
-                <li class="pc-item">
-                    <a href="#" class="pc-link">
-                        <span class="pc-micon"><i class="ti ti-dashboard"></i></span>
-                        <span class="pc-mtext">Dashboard</span>
-                    </a>
-                </li>
-
-                <li class="pc-item">
-                    <a href="{{ route('representatives.index') }}" class="pc-link">
-                        <span class="pc-micon"><i class="ti ti-dashboard"></i></span>
-                        <span class="pc-mtext">Representatives</span>
-                    </a>
-                </li>
-
-                
-
-
-
-                <li class="pc-item pc-hasmenu">
-                    <a href="#!" class="pc-link"><span class="pc-micon"><i class="ti ti-menu"></i></span><span
-                            class="pc-mtext">Menu
-                            levels</span><span class="pc-arrow"><i data-feather="chevron-right"></i></span></a>
-                    <ul class="pc-submenu">
-
-                        <li class="pc-item pc-hasmenu">
-                            <a href="#!" class="pc-link">Level 2.2<span class="pc-arrow"><i
-                                        data-feather="chevron-right"></i></span></a>
-                            <ul class="pc-submenu">
-                                <li class="pc-item"><a class="pc-link" href="#!">Level 3.1</a></li>
-                                <li class="pc-item"><a class="pc-link" href="#!">Level 3.2</a></li>
-                            </ul>
-                        </li>
-                    </ul>
-                </li>
-                <li class="pc-item">
-                    <a href="../other/sample-page.html" class="pc-link">
-                        <span class="pc-micon"><i class="ti ti-brand-chrome"></i></span>
-                        <span class="pc-mtext">Sample page</span>
-                    </a>
-                </li>
-            </ul>
-            @endif --}}
+            @if (Auth::user()->isAdmin())
+                <ul class="pc-navbar">
+                    <li class="pc-item">
+                        <a href="{{ route('admin.dashboard') }}" class="pc-link">
+                            <span class="pc-micon"><i class="ti ti-dashboard"></i></span>
+                            <span class="pc-mtext">Dashboard</span>
+                        </a>
+                    </li>
+                    <li class="pc-item">
+                        <a href="{{ route('admin.push-notifications.index') }}" class="pc-link">
+                            <span class="pc-micon"><i class="ti ti-bell"></i></span>
+                            <span class="pc-mtext">Push Notifications</span>
+                        </a>
+                    </li>
+                </ul>
+            @endif
 
         </div>
     </div>

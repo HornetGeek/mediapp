@@ -71,5 +71,6 @@ class Kernel extends HttpKernel
         'super_admin' => CheckUserIsSuperAdmin::class,
         'ability' => CheckAbility::class,
         'cron.secret' => \App\Http\Middleware\CronSecret::class,
+        'rep.active' => \App\Http\Middleware\EnsureRepresentativeIsActive::class,
     ];
 }
