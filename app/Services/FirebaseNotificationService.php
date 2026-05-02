@@ -35,7 +35,7 @@ class FirebaseNotificationService
         $this->client->addScope('https://www.googleapis.com/auth/firebase.messaging');
     }
 
-    public function sendNotification($deviceToken, $title, $body, $data = [])
+    public function sendNotification($deviceToken, $title, $body, $data = [], ?string $imageUrl = null)
     {
         if (empty($deviceToken)) {
             Log::warning('Skipping FCM notification because device token is empty');
@@ -94,6 +94,10 @@ class FirebaseNotificationService
                 ],
             ],
         ];
+
+        if (!empty($imageUrl)) {
+            $message['message']['notification']['image'] = (string) $imageUrl;
+        }
 
         if (!empty($data)) {
             $message['message']['data'] = $data;

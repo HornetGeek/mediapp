@@ -129,7 +129,8 @@ class SendFcmNotificationListener
                     $event->notifiable->fcm_token,
                     $event->title,
                     $event->body,
-                    $event->data
+                    $event->data,
+                    $event->image_url ?? null
                 );
 
                 \Log::info('FCM send result', [

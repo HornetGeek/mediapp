@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Support\CompanyPayload;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -20,6 +21,9 @@ class RepsResource extends JsonResource
             'email' => $this->email,
             'phone' => $this->phone,
             'status' => $this->status,
+            'registration_status' => $this->registration_status ?? 'active',
+            'can_book' => ($this->registration_status ?? 'active') === 'active',
+            'requires_company_approval' => ($this->registration_status ?? 'active') === 'pending',
             'daily_visits_limit' => max(0, (int) ($this->daily_visits_limit ?? (optional($this->company)->visits_per_day ?? 0))),
             'used_visits_today' => max(0, (int) ($this->used_visits_today ?? 0)),
             'remaining_visits_today' => max(0, (int) ($this->remaining_visits_today ?? 0)),
@@ -39,12 +43,7 @@ class RepsResource extends JsonResource
                     ];
                 });
             }),
-            'company' => $this->whenLoaded('company', function () {
-                return [
-                    'id' => $this->company->id,
-                    'name' => $this->company->name,
-                ];
-            }),
+            'company' => CompanyPayload::forRepresentative($this->resource),
             'created_at' => $this->created_at->toDateTimeString(),
         ];
     }

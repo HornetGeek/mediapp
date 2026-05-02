@@ -2,10 +2,13 @@
 
 use App\Http\Controllers\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\dashboard\admin\AdminController;
+use App\Http\Controllers\dashboard\admin\PushNotificationsController;
 use App\Http\Controllers\dashboard\admin\RepresentativesController;
 use App\Http\Controllers\dashboard\AuthController;
+use App\Http\Controllers\dashboard\super_admin\BannerAdsController;
 use App\Http\Controllers\dashboard\super_admin\CompaniesController;
 use App\Http\Controllers\dashboard\super_admin\DoctorsController;
+use App\Http\Controllers\dashboard\super_admin\NotificationBroadcastsController;
 use App\Http\Controllers\dashboard\super_admin\PackagesController;
 use App\Http\Controllers\dashboard\super_admin\SpecialitiesController;
 use App\Http\Controllers\dashboard\super_admin\SpecialtiesController;
@@ -40,6 +43,13 @@ Route::middleware(['auth', 'role:super_admin'])->group(function () {
         Route::post('email-feedback', [SuperadminController::class, 'storeEmailFedback'])->name('superadmin.email.feedback');
 
         Route::post('store/app-versions', [SuperadminController::class, 'storeAppVersions'])->name('superadmin.app.versions');
+
+        Route::controller(BannerAdsController::class)->group(function () {
+            Route::get('banner-ads', 'index')->name('banner-ads.index');
+            Route::post('banner-ads/store', 'store')->name('banner-ads.store');
+            Route::put('banner-ads/update/{id}', 'update')->name('banner-ads.update');
+            Route::get('banner-ads/delete/{id}', 'destroy')->name('banner-ads.delete');
+        });
 
         // ===== Packages Routes =====
         Route::controller(PackagesController::class)->group(function () {
@@ -76,6 +86,14 @@ Route::middleware(['auth', 'role:super_admin'])->group(function () {
             Route::get('doctors/delete/{id}', 'destroy')->name('doctors.delete');
         });
 
+        // ===== Push Notification Broadcasts =====
+        Route::controller(NotificationBroadcastsController::class)->group(function () {
+            Route::get('notification-broadcasts', 'index')->name('notification-broadcasts.index');
+            Route::get('notification-broadcasts/create', 'create')->name('notification-broadcasts.create');
+            Route::post('notification-broadcasts', 'store')->name('notification-broadcasts.store');
+            Route::get('notification-broadcasts/{id}', 'show')->name('notification-broadcasts.show');
+        });
+
         Route::controller(VisitsTrackerController::class)->group(function () {
             Route::get('visits', 'VisitsTrack')->name('visits.index');
             Route::get('visits/delete/{id}', 'destroy')->name('visits.delete');
@@ -89,20 +107,16 @@ Route::middleware(['auth', 'role:super_admin'])->group(function () {
     });
 });
 
-// Route::middleware(['auth', 'role:admin'])->group(function () {
-//     Route::prefix('admin')->group(function () {
-//         Route::get('dashboard', [AdminController::class, 'index'])->name('admin.dashboard');
-//         Route::post('logout', [AuthController::class, 'logout'])->name('logout');
+Route::middleware(['auth', 'role:admin'])->group(function () {
+    Route::prefix('admin')->group(function () {
+        Route::get('dashboard', [AdminController::class, 'index'])->name('admin.dashboard');
 
-//         // ===== Representatives Routes =====
-//         Route::controller(RepresentativesController::class)->group(function () {
-//             Route::get('representatives', 'index')->name('representatives.index');
-//             Route::post('representatives/store', 'store')->name('representatives.store');
-//             Route::put('representatives/update/{id}', 'update')->name('representatives.update');
-//             Route::get('representatives/delete/{id}', 'destroy')->name('representatives.delete');
-//         });
-//     });
-// });
+        Route::controller(PushNotificationsController::class)->group(function () {
+            Route::get('push-notifications', 'index')->name('admin.push-notifications.index');
+            Route::post('push-notifications/send', 'send')->name('admin.push-notifications.send');
+        });
+    });
+});
 
 
 // Route::get('/', function () {

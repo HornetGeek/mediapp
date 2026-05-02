@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Support\CompanyPayload;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -34,10 +35,7 @@ class DoctorAppointmentsResource extends JsonResource
             'end_time' => \Carbon\Carbon::parse($this->end_time)->format('h:i A'),
             'status' => $this->status,
             'appointment_code' => $this->appointment_code,
-            'company' => [
-                'id' => $this->company->id,
-                'name' => $this->company->name,
-            ],
+            'company' => CompanyPayload::forAppointment($this->resource),
             'cancelled_by' => $this->cancelled_by,
         ];
     }

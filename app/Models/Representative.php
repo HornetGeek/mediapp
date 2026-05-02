@@ -16,8 +16,12 @@ class Representative extends Authenticatable
         'email',
         'phone',
         'company_id',
+        'company_catalog_id',
+        'requested_company_name',
         'password',
         'status',
+        'registration_status',
+        'daily_visits_limit',
         'fcm_token',
     ];
     protected $hidden = [
@@ -29,6 +33,16 @@ class Representative extends Authenticatable
     public function company()
     {
         return $this->belongsTo(Company::class);
+    }
+
+    public function companyCatalog()
+    {
+        return $this->belongsTo(RepCompanyCatalog::class, 'company_catalog_id');
+    }
+
+    public function isRegistrationActive(): bool
+    {
+        return ($this->registration_status ?? 'active') === 'active';
     }
 
     public function appointments()

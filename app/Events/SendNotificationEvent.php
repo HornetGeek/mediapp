@@ -24,6 +24,7 @@ class SendNotificationEvent
     public $dedupe_key;
     // Deprecated for runtime dedupe logic; kept for constructor backward compatibility.
     public $dedupe_window_minutes;
+    public $image_url;
 
     /**
      * Create a new event instance.
@@ -35,7 +36,8 @@ class SendNotificationEvent
         $targetTypeOrData = null,
         array $data = [],
         ?string $dedupeKey = null,
-        ?int $dedupeWindowMinutes = null
+        ?int $dedupeWindowMinutes = null,
+        ?string $imageUrl = null
     )
     {
         $this->notifiable = $notifiable;
@@ -53,6 +55,7 @@ class SendNotificationEvent
         $this->dedupe_key = $dedupeKey;
         $window = $dedupeWindowMinutes ?? self::DEFAULT_DEDUPE_WINDOW_MINUTES;
         $this->dedupe_window_minutes = $window > 0 ? $window : self::DEFAULT_DEDUPE_WINDOW_MINUTES;
+        $this->image_url = $imageUrl !== null && $imageUrl !== '' ? $imageUrl : null;
     }
 
     // /**
