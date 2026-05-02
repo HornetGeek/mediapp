@@ -55,6 +55,37 @@ class RepresentativeSelfRegistrationTest extends TestCase
 
     }
 
+    public function test_company_catalog_search_returns_active_ranked_matches(): void
+    {
+        RepCompanyCatalog::create([
+            'name' => 'Inactive PHARCO',
+            'normalized_name' => 'INACTIVE PHARCO',
+            'rank' => 1,
+            'status' => 'inactive',
+        ]);
+        $unranked = RepCompanyCatalog::create([
+            'name' => 'PHARCO Unranked',
+            'normalized_name' => 'PHARCO UNRANKED',
+            'rank' => null,
+            'status' => 'active',
+        ]);
+        $ranked = RepCompanyCatalog::create([
+            'name' => 'PHARCO',
+            'normalized_name' => 'PHARCO',
+            'rank' => 5,
+            'status' => 'active',
+        ]);
+
+        $response = $this->getJson('/api/reps/companies?search=PHARCO&page=1&per_page=20');
+
+        $response->assertStatus(200)
+            ->assertJsonPath('code', 200)
+            ->assertJsonPath('data.0.id', $ranked->id)
+            ->assertJsonPath('data.0.name', 'PHARCO')
+            ->assertJsonPath('data.1.id', $unranked->id)
+            ->assertJsonCount(2, 'data');
+    }
+
     public function test_listed_company_registration_creates_active_representative(): void
     {
         $catalog = RepCompanyCatalog::create([
