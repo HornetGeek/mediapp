@@ -23,7 +23,7 @@ class NotificationsResource extends JsonResource
             'media_type' => $this->media_type ?? 'none',
             'image_url' => $this->image_url,
             'video_url' => $this->video_url,
-            'is_read' => $this->is_read,
+            'is_read' => (int) ($this->is_read ?? false),
             'acknowledged_at' => $this->acknowledged_at?->toDateTimeString(),
           	'target_type' => $this->target_type ?? null
         ];
