@@ -26,18 +26,23 @@ composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction
 # 4) Run migrations
 /usr/bin/php8.4 artisan migrate --force
 
-# 5) Rebuild caches
+# 5) Ensure public uploads are web-accessible
+/usr/bin/php8.4 artisan storage:link
+
+# 6) Rebuild caches
 /usr/bin/php8.4 artisan optimize:clear
 /usr/bin/php8.4 artisan config:cache
 /usr/bin/php8.4 artisan route:cache
 /usr/bin/php8.4 artisan view:cache
 
-# 6) Restart queue workers (if used)
+# 7) Restart queue workers (if used)
 /usr/bin/php8.4 artisan queue:restart
 
-# 7) Exit maintenance mode
+# 8) Exit maintenance mode
 /usr/bin/php8.4 artisan up
 ```
+
+Production `.env` should use `APP_URL=https://mediapps.online` without a trailing slash.
 
 ## Post-Deploy Verification
 
@@ -45,6 +50,8 @@ composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction
 cd /home/mediapps/htdocs/mediapps.online
 /usr/bin/php8.4 artisan schedule:list
 /usr/bin/php8.4 artisan schedule:run
+ls -la public/storage
+ls -la storage/app/public/banner-ads
 tail -n 200 storage/logs/laravel.log
 tail -n 200 storage/logs/cron.log
 ```
@@ -67,4 +74,3 @@ composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction
 /usr/bin/php8.4 artisan optimize:clear
 /usr/bin/php8.4 artisan up
 ```
-

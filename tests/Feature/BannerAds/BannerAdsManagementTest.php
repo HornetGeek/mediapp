@@ -138,6 +138,27 @@ class BannerAdsManagementTest extends TestCase
         $this->assertNotContains($inactive->id, collect($response->json('data'))->pluck('id')->all());
     }
 
+    public function test_public_disk_url_trims_trailing_app_url_slash(): void
+    {
+        config([
+            'filesystems.disks.public.url' => rtrim('https://mediapps.online/', '/') . '/storage',
+        ]);
+        Storage::forgetDisk('public');
+
+        $bannerAd = new BannerAd([
+            'title' => 'Promo',
+            'image_path' => 'banner-ads/promo.jpg',
+            'sort_order' => 1,
+            'status' => 'active',
+        ]);
+
+        $this->assertSame(
+            'https://mediapps.online/storage/banner-ads/promo.jpg',
+            $bannerAd->image_url
+        );
+        $this->assertStringNotContainsString('online//storage', $bannerAd->image_url);
+    }
+
     private function createSuperAdmin(): User
     {
         return User::create([
