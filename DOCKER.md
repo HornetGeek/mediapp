@@ -35,6 +35,7 @@ Then run:
 ```bash
 docker compose exec app php artisan key:generate
 docker compose exec app php artisan migrate --seed
+docker compose exec app php artisan storage:link
 ```
 
 ## 3) Access app
