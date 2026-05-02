@@ -31,8 +31,39 @@
                             </div>
                         @endif
 
+                        @if ($broadcast->video_url)
+                            <div class="mb-3">
+                                <video src="{{ $broadcast->video_url }}" controls class="img-fluid rounded" style="max-height: 320px;"></video>
+                            </div>
+                        @endif
+
                         <h5>Body</h5>
                         <p style="white-space: pre-wrap;">{{ $broadcast->body }}</p>
+
+                        <hr>
+
+                        @php
+                            $deliveryLabels = ['both' => 'Push + In-app', 'push_only' => 'Push only', 'in_app_only' => 'In-app only'];
+                            $deliveryLabel = $deliveryLabels[$broadcast->delivery_type ?? 'both'] ?? 'Push + In-app';
+                        @endphp
+                        <div class="row">
+                            <div class="col-md-4">
+                                <strong>Delivery:</strong>
+                                <span class="badge bg-primary">{{ $deliveryLabel }}</span>
+                            </div>
+                            <div class="col-md-4">
+                                <strong>Display:</strong>
+                                <span class="badge bg-{{ ($broadcast->display_type ?? 'list') === 'modal' ? 'warning' : 'secondary' }}">
+                                    {{ ucfirst($broadcast->display_type ?? 'list') }}
+                                </span>
+                            </div>
+                            <div class="col-md-4">
+                                <strong>Skippable:</strong>
+                                <span class="badge bg-{{ $broadcast->is_skippable ? 'success' : 'danger' }}">
+                                    {{ $broadcast->is_skippable ? 'Yes' : 'No' }}
+                                </span>
+                            </div>
+                        </div>
 
                         <hr>
 

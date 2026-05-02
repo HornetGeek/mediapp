@@ -56,71 +56,84 @@ class SendFcmNotificationListener
             'dedupe_window_minutes' => $event->dedupe_window_minutes ?? null,
         ]);
 
-        $inserted = 0;
-        try {
-            $inserted = Notification::query()->insertOrIgnore([
-                'title' => $event->title,
-                'body' => $event->body,
-                'is_read' => false,
-                'target_type' => $event->target_type,
-                'dedupe_key' => $dedupeKey,
-                'dedupe_fingerprint' => $dedupeFingerprint,
-                'notifiable_id' => $event->notifiable->id,
-                'notifiable_type' => $notifiableType,
-                'created_at' => $now,
-                'updated_at' => $now,
-            ]);
-        } catch (Throwable $e) {
-            \Log::error('Failed while persisting deduplicated notification', [
-                'notifiable_id' => $event->notifiable->id ?? null,
-                'notifiable_type' => $notifiableType,
-                'dedupe_key' => $dedupeKey,
-                'dedupe_fingerprint' => $dedupeFingerprint,
-                'error' => $e->getMessage(),
-            ]);
-            return;
-        }
-
+        $deliveryType = $event->delivery_type ?? 'both';
         $shouldLogBookedDebug = $this->shouldLogBookedDebug($dedupeKey);
-        $resolvedNotification = null;
-        if ($shouldLogBookedDebug) {
-            $resolvedNotification = Notification::query()
-                ->where('dedupe_fingerprint', $dedupeFingerprint)
-                ->first(['id', 'created_at']);
-        }
 
-        if ($inserted === 0) {
+        if ($deliveryType !== 'push_only') {
+            $inserted = 0;
+            try {
+                $inserted = Notification::query()->insertOrIgnore([
+                    'title' => $event->title,
+                    'body' => $event->body,
+                    'image_url' => $event->image_url ?? null,
+                    'video_url' => $event->video_url ?? null,
+                    'media_type' => $event->media_type ?? 'none',
+                    'display_type' => $event->display_type ?? 'list',
+                    'is_skippable' => $event->is_skippable ?? true,
+                    'is_read' => false,
+                    'target_type' => $event->target_type,
+                    'dedupe_key' => $dedupeKey,
+                    'dedupe_fingerprint' => $dedupeFingerprint,
+                    'notifiable_id' => $event->notifiable->id,
+                    'notifiable_type' => $notifiableType,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ]);
+            } catch (Throwable $e) {
+                \Log::error('Failed while persisting deduplicated notification', [
+                    'notifiable_id' => $event->notifiable->id ?? null,
+                    'notifiable_type' => $notifiableType,
+                    'dedupe_key' => $dedupeKey,
+                    'dedupe_fingerprint' => $dedupeFingerprint,
+                    'error' => $e->getMessage(),
+                ]);
+                return;
+            }
+
+            $resolvedNotification = null;
+            if ($shouldLogBookedDebug) {
+                $resolvedNotification = Notification::query()
+                    ->where('dedupe_fingerprint', $dedupeFingerprint)
+                    ->first(['id', 'created_at']);
+            }
+
+            if ($inserted === 0) {
+                if ($shouldLogBookedDebug) {
+                    \Log::info('Booked notification dedupe debug', [
+                        'notifiable_id' => $event->notifiable->id ?? null,
+                        'notifiable_type' => $notifiableType,
+                        'dedupe_key' => $dedupeKey,
+                        'dedupe_fingerprint' => $dedupeFingerprint,
+                        'inserted' => 0,
+                        'notification_id' => $resolvedNotification?->id,
+                        'created_at' => $resolvedNotification?->created_at?->toDateTimeString(),
+                    ]);
+                }
+
+                \Log::info('Duplicate notification skipped', [
+                    'notifiable_id' => $event->notifiable->id ?? null,
+                    'notifiable_type' => $notifiableType,
+                    'dedupe_key' => $dedupeKey,
+                    'dedupe_fingerprint' => $dedupeFingerprint,
+                ]);
+                return;
+            }
+
             if ($shouldLogBookedDebug) {
                 \Log::info('Booked notification dedupe debug', [
                     'notifiable_id' => $event->notifiable->id ?? null,
                     'notifiable_type' => $notifiableType,
                     'dedupe_key' => $dedupeKey,
                     'dedupe_fingerprint' => $dedupeFingerprint,
-                    'inserted' => 0,
+                    'inserted' => 1,
                     'notification_id' => $resolvedNotification?->id,
                     'created_at' => $resolvedNotification?->created_at?->toDateTimeString(),
                 ]);
             }
-
-            \Log::info('Duplicate notification skipped', [
-                'notifiable_id' => $event->notifiable->id ?? null,
-                'notifiable_type' => $notifiableType,
-                'dedupe_key' => $dedupeKey,
-                'dedupe_fingerprint' => $dedupeFingerprint,
-            ]);
-            return;
         }
 
-        if ($shouldLogBookedDebug) {
-            \Log::info('Booked notification dedupe debug', [
-                'notifiable_id' => $event->notifiable->id ?? null,
-                'notifiable_type' => $notifiableType,
-                'dedupe_key' => $dedupeKey,
-                'dedupe_fingerprint' => $dedupeFingerprint,
-                'inserted' => 1,
-                'notification_id' => $resolvedNotification?->id,
-                'created_at' => $resolvedNotification?->created_at?->toDateTimeString(),
-            ]);
+        if ($deliveryType === 'in_app_only') {
+            return;
         }
 
         if ($event->notifiable->fcm_token) {
