@@ -14,6 +14,11 @@ class PushNotificationCampaign extends Model
         'specialty_id',
         'title',
         'body',
+        'image_path',
+        'video_path',
+        'display_type',
+        'is_skippable',
+        'media_type',
         'total_doctors',
         'sent_count',
         'failed_count',
@@ -23,6 +28,7 @@ class PushNotificationCampaign extends Model
         'total_doctors' => 'integer',
         'sent_count' => 'integer',
         'failed_count' => 'integer',
+        'is_skippable' => 'boolean',
     ];
 
     public function sender()

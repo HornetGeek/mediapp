@@ -31,6 +31,7 @@ class AuthRepController extends Controller
             'company_id' => null,
             'company_catalog_id' => $data['company_catalog_id'] ?? null,
             'requested_company_name' => $data['requested_company_name'] ?? null,
+            'requested_line_name' => $data['requested_line_name'],
             'registration_status' => $isCatalogCompany ? 'active' : 'pending',
             'daily_visits_limit' => $isCatalogCompany ? config('reps.self_registered_daily_visits_limit') : null,
             'status' => 'active',

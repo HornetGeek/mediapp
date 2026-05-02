@@ -6,6 +6,7 @@ use App\Models\Doctors;
 use App\Models\Notification;
 use App\Models\PushNotificationCampaign;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Throwable;
 
 class DoctorSpecialtyPushNotificationService
@@ -15,13 +16,33 @@ class DoctorSpecialtyPushNotificationService
     ) {
     }
 
-    public function send(int $senderUserId, int $specialtyId, string $title, string $body): PushNotificationCampaign
+    public function send(
+        int $senderUserId,
+        int $specialtyId,
+        string $title,
+        string $body,
+        ?string $imagePath = null,
+        ?string $videoPath = null,
+        string $displayType = 'list',
+        bool $isSkippable = true
+    ): PushNotificationCampaign
     {
+        $imageUrl = $imagePath ? Storage::disk('public')->url($imagePath) : null;
+        $videoUrl = $videoPath ? Storage::disk('public')->url($videoPath) : null;
+        $mediaType = $videoUrl ? 'video' : ($imageUrl ? 'image' : 'none');
+        $displayType = $displayType === 'modal' ? 'modal' : 'list';
+        $isSkippable = $displayType === 'modal' ? $isSkippable : true;
+
         $campaign = PushNotificationCampaign::create([
             'sender_user_id' => $senderUserId,
             'specialty_id' => $specialtyId,
             'title' => $title,
             'body' => $body,
+            'image_path' => $imagePath,
+            'video_path' => $videoPath,
+            'display_type' => $displayType,
+            'is_skippable' => $isSkippable,
+            'media_type' => $mediaType,
             'total_doctors' => 0,
             'sent_count' => 0,
             'failed_count' => 0,
@@ -34,7 +55,7 @@ class DoctorSpecialtyPushNotificationService
         Doctors::query()
             ->where('specialty_id', $specialtyId)
             ->orderBy('id')
-            ->chunkById(100, function ($doctors) use ($campaign, $specialtyId, $title, $body, &$totalDoctors, &$sentCount, &$failedCount) {
+            ->chunkById(100, function ($doctors) use ($campaign, $specialtyId, $title, $body, $imageUrl, $videoUrl, $mediaType, $displayType, $isSkippable, &$totalDoctors, &$sentCount, &$failedCount) {
                 foreach ($doctors as $doctor) {
                     $totalDoctors++;
                     $dedupeKey = sprintf('admin_specialty_push:%d:doctor:%d', (int) $campaign->id, (int) $doctor->id);
@@ -42,6 +63,11 @@ class DoctorSpecialtyPushNotificationService
                     Notification::create([
                         'title' => $title,
                         'body' => $body,
+                        'image_url' => $imageUrl,
+                        'video_url' => $videoUrl,
+                        'media_type' => $mediaType,
+                        'display_type' => $displayType,
+                        'is_skippable' => $isSkippable,
                         'is_read' => false,
                         'target_type' => 'doctor',
                         'dedupe_key' => $dedupeKey,
@@ -64,7 +90,11 @@ class DoctorSpecialtyPushNotificationService
                                 'target_type' => 'doctor',
                                 'specialty_id' => $specialtyId,
                                 'campaign_id' => $campaign->id,
-                            ]
+                                'display_type' => $displayType,
+                                'is_skippable' => $isSkippable ? '1' : '0',
+                                'media_type' => $mediaType,
+                            ],
+                            $mediaType === 'image' ? $imageUrl : null
                         );
 
                         if ($result === null) {
