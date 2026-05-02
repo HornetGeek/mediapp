@@ -18,10 +18,13 @@ class RepCompanyCatalogController extends Controller
         $companies = RepCompanyCatalog::query()
             ->where('status', 'active')
             ->when($search !== '', function ($query) use ($search) {
-                $query->where('name', 'like', '%' . $search . '%')
-                    ->orWhere('normalized_name', 'like', '%' . RepCompanyCatalog::normalizeName($search) . '%');
+                $query->where(function ($query) use ($search) {
+                    $query->where('name', 'like', '%' . $search . '%')
+                        ->orWhere('normalized_name', 'like', '%' . RepCompanyCatalog::normalizeName($search) . '%');
+                });
             })
-            ->orderByRaw('rank IS NULL, rank ASC')
+            ->orderByRaw('CASE WHEN `rank` IS NULL THEN 1 ELSE 0 END')
+            ->orderBy('rank')
             ->orderBy('name')
             ->paginate($perPage);
 
