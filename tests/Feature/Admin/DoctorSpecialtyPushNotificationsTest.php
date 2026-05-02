@@ -8,10 +8,13 @@ use App\Models\PushNotificationCampaign;
 use App\Models\Specialty;
 use App\Models\User;
 use App\Services\FirebaseNotificationService;
+use App\Services\VideoDurationService;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
 use Mockery;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
@@ -54,7 +57,8 @@ class DoctorSpecialtyPushNotificationsTest extends TestCase
                         && $data['target_type'] === 'doctor'
                         && (int) $data['specialty_id'] === (int) $cardiology->id
                         && !empty($data['campaign_id']);
-                })
+                }),
+                null
             )
             ->andReturn(['name' => 'projects/test/messages/1']);
         $this->app->instance(FirebaseNotificationService::class, $firebase);
@@ -93,6 +97,155 @@ class DoctorSpecialtyPushNotificationsTest extends TestCase
         ]);
     }
 
+    public function test_admin_can_send_push_notifications_with_image_to_doctors_by_specialty(): void
+    {
+        config([
+            'filesystems.disks.public.url' => 'https://mediapps.online/storage',
+        ]);
+        Storage::fake('public');
+
+        $admin = $this->createUser('admin');
+        $specialty = Specialty::create(['name' => 'Cardiology']);
+        $doctor = $this->createDoctor($specialty->id, 'target-token', 'target-image@example.com');
+
+        $firebase = Mockery::mock(FirebaseNotificationService::class);
+        $firebase->shouldReceive('sendNotification')
+            ->once()
+            ->with(
+                'target-token',
+                'Image Notice',
+                'Please review the image notice.',
+                Mockery::on(function (array $data) use ($specialty) {
+                    return $data['type'] === 'admin_push_notification'
+                        && $data['target_type'] === 'doctor'
+                        && (int) $data['specialty_id'] === (int) $specialty->id
+                        && !empty($data['campaign_id']);
+                }),
+                Mockery::on(function (?string $imageUrl) {
+                    return is_string($imageUrl)
+                        && str_contains($imageUrl, '/storage/notification-campaigns/')
+                        && str_ends_with($imageUrl, '.jpg');
+                })
+            )
+            ->andReturn(['name' => 'projects/test/messages/with-image']);
+        $this->app->instance(FirebaseNotificationService::class, $firebase);
+
+        $this->actingAs($admin)->post('/admin/push-notifications/send', [
+            'specialty_id' => $specialty->id,
+            'title' => 'Image Notice',
+            'body' => 'Please review the image notice.',
+            'image' => UploadedFile::fake()->image('notice.jpg', 1200, 630),
+        ])->assertRedirect(route('admin.push-notifications.index'));
+
+        $campaign = PushNotificationCampaign::firstOrFail();
+        $this->assertNotNull($campaign->image_path);
+        Storage::disk('public')->assertExists($campaign->image_path);
+
+        $notification = Notification::where('notifiable_id', $doctor->id)->firstOrFail();
+        $this->assertSame('Image Notice', $notification->title);
+        $this->assertSame(Storage::disk('public')->url($campaign->image_path), $notification->image_url);
+
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $this->getJson('/api/doctor/notifications')
+            ->assertStatus(200)
+            ->assertJsonPath('data.0.media_type', 'image')
+            ->assertJsonPath('data.0.display_type', 'list')
+            ->assertJsonPath('data.0.image_url', $notification->image_url);
+    }
+
+    public function test_admin_can_send_non_skippable_modal_notification(): void
+    {
+        $admin = $this->createUser('admin');
+        $specialty = Specialty::create(['name' => 'Cardiology']);
+        $doctor = $this->createDoctor($specialty->id, null, 'modal@example.com');
+
+        $this->actingAs($admin)->post('/admin/push-notifications/send', [
+            'specialty_id' => $specialty->id,
+            'title' => 'Required Notice',
+            'body' => 'Please acknowledge this notice.',
+            'display_type' => 'modal',
+        ])->assertRedirect(route('admin.push-notifications.index'));
+
+        $notification = Notification::where('notifiable_id', $doctor->id)->firstOrFail();
+        $this->assertSame('modal', $notification->display_type);
+        $this->assertFalse((bool) $notification->is_skippable);
+
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $this->getJson('/api/doctor/notifications/modals')
+            ->assertStatus(200)
+            ->assertJsonPath('data.0.title', 'Required Notice')
+            ->assertJsonPath('data.0.display_type', 'modal')
+            ->assertJsonPath('data.0.is_skippable', false)
+            ->assertJsonPath('data.0.media_type', 'none');
+
+        $this->putJson('/api/doctor/notifications/' . $notification->id . '/acknowledge')
+            ->assertStatus(200)
+            ->assertJsonPath('data.acknowledged_at', fn ($value) => is_string($value) && $value !== '');
+
+        $this->getJson('/api/doctor/notifications/modals')
+            ->assertStatus(200)
+            ->assertJsonPath('data', []);
+    }
+
+    public function test_admin_can_send_modal_notification_with_video(): void
+    {
+        Storage::fake('public');
+
+        $admin = $this->createUser('admin');
+        $specialty = Specialty::create(['name' => 'Cardiology']);
+        $doctor = $this->createDoctor($specialty->id, 'video-token', 'video@example.com');
+
+        $duration = Mockery::mock(VideoDurationService::class);
+        $duration->shouldReceive('validateMaxDuration')->once()->andReturn(null);
+        $this->app->instance(VideoDurationService::class, $duration);
+
+        $firebase = Mockery::mock(FirebaseNotificationService::class);
+        $firebase->shouldReceive('sendNotification')
+            ->once()
+            ->with(
+                'video-token',
+                'Video Notice',
+                'Please review this video.',
+                Mockery::on(function (array $data) {
+                    return $data['type'] === 'admin_push_notification'
+                        && $data['display_type'] === 'modal'
+                        && $data['is_skippable'] === '1'
+                        && $data['media_type'] === 'video';
+                }),
+                null
+            )
+            ->andReturn(['name' => 'projects/test/messages/video']);
+        $this->app->instance(FirebaseNotificationService::class, $firebase);
+
+        $this->actingAs($admin)->post('/admin/push-notifications/send', [
+            'specialty_id' => $specialty->id,
+            'title' => 'Video Notice',
+            'body' => 'Please review this video.',
+            'display_type' => 'modal',
+            'is_skippable' => '1',
+            'video' => UploadedFile::fake()->create('notice.mp4', 1024, 'video/mp4'),
+        ])->assertRedirect(route('admin.push-notifications.index'));
+
+        $campaign = PushNotificationCampaign::firstOrFail();
+        $this->assertSame('video', $campaign->media_type);
+        $this->assertNotNull($campaign->video_path);
+        Storage::disk('public')->assertExists($campaign->video_path);
+
+        $notification = Notification::where('notifiable_id', $doctor->id)->firstOrFail();
+        $this->assertSame('video', $notification->media_type);
+        $this->assertNull($notification->image_url);
+        $this->assertNotNull($notification->video_url);
+
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $this->getJson('/api/doctor/notifications/modals')
+            ->assertStatus(200)
+            ->assertJsonPath('data.0.media_type', 'video')
+            ->assertJsonPath('data.0.video_url', $notification->video_url);
+    }
+
     public function test_fcm_failure_is_counted_without_stopping_campaign(): void
     {
         $admin = $this->createUser('admin');
@@ -101,8 +254,8 @@ class DoctorSpecialtyPushNotificationsTest extends TestCase
         $this->createDoctor($specialty->id, 'failed-token', 'failed@example.com');
 
         $firebase = Mockery::mock(FirebaseNotificationService::class);
-        $firebase->shouldReceive('sendNotification')->with('ok-token', Mockery::any(), Mockery::any(), Mockery::any())->andReturn(['name' => 'ok']);
-        $firebase->shouldReceive('sendNotification')->with('failed-token', Mockery::any(), Mockery::any(), Mockery::any())->andReturn(null);
+        $firebase->shouldReceive('sendNotification')->with('ok-token', Mockery::any(), Mockery::any(), Mockery::any(), null)->andReturn(['name' => 'ok']);
+        $firebase->shouldReceive('sendNotification')->with('failed-token', Mockery::any(), Mockery::any(), Mockery::any(), null)->andReturn(null);
         $this->app->instance(FirebaseNotificationService::class, $firebase);
 
         $this->actingAs($admin)->post('/admin/push-notifications/send', [
@@ -128,6 +281,48 @@ class DoctorSpecialtyPushNotificationsTest extends TestCase
 
         $response->assertRedirect('/admin/push-notifications');
         $response->assertSessionHasErrors(['specialty_id', 'title', 'body']);
+    }
+
+    public function test_invalid_push_notification_image_returns_validation_error(): void
+    {
+        $admin = $this->createUser('admin');
+        $specialty = Specialty::create(['name' => 'Cardiology']);
+
+        $response = $this->actingAs($admin)
+            ->from('/admin/push-notifications')
+            ->post('/admin/push-notifications/send', [
+                'specialty_id' => $specialty->id,
+                'title' => 'Invalid Image',
+                'body' => 'Invalid image payload.',
+                'image' => UploadedFile::fake()->create('notice.pdf', 10, 'application/pdf'),
+            ]);
+
+        $response->assertRedirect('/admin/push-notifications');
+        $response->assertSessionHasErrors('image');
+    }
+
+    public function test_video_longer_than_twenty_seconds_returns_validation_error(): void
+    {
+        $admin = $this->createUser('admin');
+        $specialty = Specialty::create(['name' => 'Cardiology']);
+
+        $duration = Mockery::mock(VideoDurationService::class);
+        $duration->shouldReceive('validateMaxDuration')
+            ->once()
+            ->andReturn('Video duration must not exceed 20 seconds.');
+        $this->app->instance(VideoDurationService::class, $duration);
+
+        $response = $this->actingAs($admin)
+            ->from('/admin/push-notifications')
+            ->post('/admin/push-notifications/send', [
+                'specialty_id' => $specialty->id,
+                'title' => 'Long Video',
+                'body' => 'Invalid video payload.',
+                'video' => UploadedFile::fake()->create('long.mp4', 1024, 'video/mp4'),
+            ]);
+
+        $response->assertRedirect('/admin/push-notifications');
+        $response->assertSessionHasErrors('video');
     }
 
     public function test_admin_routes_require_admin_session(): void
@@ -158,6 +353,11 @@ class DoctorSpecialtyPushNotificationsTest extends TestCase
             ->assertStatus(200)
             ->assertJsonPath('data.0.title', 'Admin Notice')
             ->assertJsonPath('data.0.body', 'Please check the dashboard notice.')
+            ->assertJsonPath('data.0.display_type', 'list')
+            ->assertJsonPath('data.0.is_skippable', true)
+            ->assertJsonPath('data.0.media_type', 'none')
+            ->assertJsonPath('data.0.image_url', null)
+            ->assertJsonPath('data.0.video_url', null)
             ->assertJsonPath('data.0.target_type', 'doctor');
     }
 
@@ -235,6 +435,12 @@ class DoctorSpecialtyPushNotificationsTest extends TestCase
             $table->id();
             $table->string('title');
             $table->text('body');
+            $table->string('image_url')->nullable();
+            $table->string('video_url')->nullable();
+            $table->enum('media_type', ['none', 'image', 'video'])->default('none');
+            $table->enum('display_type', ['list', 'modal'])->default('list');
+            $table->boolean('is_skippable')->default(true);
+            $table->timestamp('acknowledged_at')->nullable();
             $table->boolean('is_read')->default(false);
             $table->enum('target_type', ['doctor', 'reps', 'company'])->nullable();
             $table->string('dedupe_key')->nullable();
@@ -250,6 +456,11 @@ class DoctorSpecialtyPushNotificationsTest extends TestCase
             $table->unsignedBigInteger('specialty_id');
             $table->string('title');
             $table->text('body');
+            $table->string('image_path')->nullable();
+            $table->string('video_path')->nullable();
+            $table->enum('display_type', ['list', 'modal'])->default('list');
+            $table->boolean('is_skippable')->default(true);
+            $table->enum('media_type', ['none', 'image', 'video'])->default('none');
             $table->unsignedInteger('total_doctors')->default(0);
             $table->unsignedInteger('sent_count')->default(0);
             $table->unsignedInteger('failed_count')->default(0);

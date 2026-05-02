@@ -18,6 +18,7 @@ class Representative extends Authenticatable
         'company_id',
         'company_catalog_id',
         'requested_company_name',
+        'requested_line_name',
         'password',
         'status',
         'registration_status',

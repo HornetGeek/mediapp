@@ -20,6 +20,7 @@ class RepsResource extends JsonResource
             'name' => $this->name,
             'email' => $this->email,
             'phone' => $this->phone,
+            'requested_line_name' => $this->requested_line_name,
             'status' => $this->status,
             'registration_status' => $this->registration_status ?? 'active',
             'can_book' => ($this->registration_status ?? 'active') === 'active',

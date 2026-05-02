@@ -102,10 +102,12 @@ class RepresentativeSelfRegistrationTest extends TestCase
             'password' => 'password123',
             'password_confirmation' => 'password123',
             'company_catalog_id' => $catalog->id,
+            'requested_line_name' => 'Line A',
         ]);
 
         $response->assertStatus(201)
             ->assertJsonPath('data.registration_status', 'active')
+            ->assertJsonPath('data.requested_line_name', 'Line A')
             ->assertJsonPath('data.can_book', true)
             ->assertJsonPath('data.company.type', 'catalog')
             ->assertJsonPath('data.daily_visits_limit', 10);
@@ -114,6 +116,7 @@ class RepresentativeSelfRegistrationTest extends TestCase
             'email' => 'self-rep@example.com',
             'company_id' => null,
             'company_catalog_id' => $catalog->id,
+            'requested_line_name' => 'Line A',
             'registration_status' => 'active',
             'daily_visits_limit' => 10,
         ]);
@@ -128,8 +131,10 @@ class RepresentativeSelfRegistrationTest extends TestCase
             'password' => 'password123',
             'password_confirmation' => 'password123',
             'requested_company_name' => 'Missing Pharma',
+            'requested_line_name' => 'Line B',
         ])->assertStatus(201)
             ->assertJsonPath('data.registration_status', 'pending')
+            ->assertJsonPath('data.requested_line_name', 'Line B')
             ->assertJsonPath('data.can_book', false)
             ->assertJsonPath('data.company.type', 'requested');
 
@@ -142,6 +147,7 @@ class RepresentativeSelfRegistrationTest extends TestCase
         $loginResponse->assertStatus(200)
             ->assertJsonPath('data.registration_status', 'pending')
             ->assertJsonPath('data.can_book', false)
+            ->assertJsonPath('data.representative.requested_line_name', 'Line B')
             ->assertJsonPath('data.error_code', 'REP_PENDING_APPROVAL');
 
         $token = $loginResponse->json('data.token');
@@ -149,7 +155,8 @@ class RepresentativeSelfRegistrationTest extends TestCase
         $this->withHeader('Authorization', 'Bearer ' . $token)
             ->getJson('/api/reps/profile')
             ->assertStatus(200)
-            ->assertJsonPath('data.registration_status', 'pending');
+            ->assertJsonPath('data.registration_status', 'pending')
+            ->assertJsonPath('data.requested_line_name', 'Line B');
 
         $this->withHeader('Authorization', 'Bearer ' . $token)
             ->getJson('/api/reps/specialities')
@@ -175,6 +182,7 @@ class RepresentativeSelfRegistrationTest extends TestCase
             'password' => 'password123',
             'password_confirmation' => 'password123',
             'company_catalog_id' => 999,
+            'requested_line_name' => 'Line C',
         ])->assertStatus(422);
 
         $this->postJson('/api/reps/register', [
@@ -184,6 +192,26 @@ class RepresentativeSelfRegistrationTest extends TestCase
             'password' => 'password123',
             'password_confirmation' => 'password123',
             'company_catalog_id' => 999,
+            'requested_line_name' => 'Line C',
+        ])->assertStatus(422);
+    }
+
+    public function test_self_registration_requires_requested_line_name(): void
+    {
+        $catalog = RepCompanyCatalog::create([
+            'name' => 'PHARCO',
+            'normalized_name' => 'PHARCO',
+            'rank' => 1,
+            'status' => 'active',
+        ]);
+
+        $this->postJson('/api/reps/register', [
+            'name' => 'Missing Line Rep',
+            'email' => 'missing-line-rep@example.com',
+            'phone' => '01000000888',
+            'password' => 'password123',
+            'password_confirmation' => 'password123',
+            'company_catalog_id' => $catalog->id,
         ])->assertStatus(422);
     }
 
@@ -345,6 +373,7 @@ class RepresentativeSelfRegistrationTest extends TestCase
             $table->unsignedBigInteger('company_id')->nullable();
             $table->unsignedBigInteger('company_catalog_id')->nullable();
             $table->string('requested_company_name')->nullable();
+            $table->string('requested_line_name')->nullable();
             $table->string('name');
             $table->string('email')->unique();
             $table->string('phone')->unique();

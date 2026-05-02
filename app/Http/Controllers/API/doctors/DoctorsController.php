@@ -603,6 +603,41 @@ class DoctorsController extends Controller
         return ApiResponse::sendResponse(200, 'Notifications fetched successfully', NotificationsResource::collection($notifications));
     }
 
+    public function getModalNotifications()
+    {
+        $doctor = auth()->user();
+        $notifications = $doctor->notifications()
+            ->where('display_type', 'modal')
+            ->whereNull('acknowledged_at')
+            ->orderBy('is_skippable', 'asc')
+            ->orderBy('created_at', 'desc')
+            ->get();
+
+        if ($notifications->isEmpty()) {
+            return ApiResponse::sendResponse(200, 'No modal notifications found', []);
+        }
+
+        return ApiResponse::sendResponse(200, 'Modal notifications fetched successfully', NotificationsResource::collection($notifications));
+    }
+
+    public function acknowledgeNotification($id)
+    {
+        $doctor = auth()->user();
+        $notification = $doctor->notifications()
+            ->where('id', $id)
+            ->first();
+
+        if (!$notification) {
+            return ApiResponse::sendResponse(404, 'Notification not found', []);
+        }
+
+        $notification->acknowledged_at = now();
+        $notification->is_read = true;
+        $notification->save();
+
+        return ApiResponse::sendResponse(200, 'Notification acknowledged successfully', new NotificationsResource($notification));
+    }
+
     private function logBookedNotificationDiagnostics(int $doctorId, $notifications): void
     {
         $bookedNotifications = $notifications
