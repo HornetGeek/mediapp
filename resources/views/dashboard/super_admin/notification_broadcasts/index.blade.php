@@ -74,7 +74,9 @@
                                                         @endif
                                                     </td>
                                                     <td>
-                                                        @php($deliveryLabels = ['both' => 'Push + In-app', 'push_only' => 'Push only', 'in_app_only' => 'In-app only'])
+                                                        @php
+                                                            $deliveryLabels = ['both' => 'Push + In-app', 'push_only' => 'Push only', 'in_app_only' => 'In-app only'];
+                                                        @endphp
                                                         <span class="badge bg-primary">{{ $deliveryLabels[$broadcast->delivery_type ?? 'both'] ?? 'Push + In-app' }}</span>
                                                     </td>
                                                     <td>
