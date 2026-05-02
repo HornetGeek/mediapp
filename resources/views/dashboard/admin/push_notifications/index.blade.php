@@ -153,7 +153,9 @@
                                             </td>
                                             <td>{{ $campaign->specialty?->name ?? '---' }}</td>
                                             <td>
-                                                @php($deliveryLabels = ['both' => 'Push + In-app', 'push_only' => 'Push only', 'in_app_only' => 'In-app only'])
+                                                @php
+                                                    $deliveryLabels = ['both' => 'Push + In-app', 'push_only' => 'Push only', 'in_app_only' => 'In-app only'];
+                                                @endphp
                                                 <span class="badge bg-primary">{{ $deliveryLabels[$campaign->delivery_type ?? 'both'] ?? 'Push + In-app' }}</span>
                                             </td>
                                             <td>
