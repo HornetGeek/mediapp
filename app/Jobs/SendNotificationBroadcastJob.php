@@ -51,16 +51,28 @@ class SendNotificationBroadcastJob implements ShouldQueue
 
             $count = 0;
             $imageUrl = $broadcast->image_url;
+            $videoUrl = $broadcast->video_url;
+            $mediaType = $broadcast->media_type ?? 'none';
+            $displayType = $broadcast->display_type ?? 'list';
+            $isSkippable = (bool) ($broadcast->is_skippable ?? true);
+            $deliveryType = $broadcast->delivery_type ?? 'both';
             $dedupeKey = 'broadcast:' . $broadcast->id;
 
-            $query->orderBy('id')->chunkById(200, function ($doctors) use ($broadcast, $dedupeKey, $imageUrl, &$count) {
+            $query->orderBy('id')->chunkById(200, function ($doctors) use ($broadcast, $dedupeKey, $imageUrl, $videoUrl, $mediaType, $displayType, $isSkippable, $deliveryType, &$count) {
                 foreach ($doctors as $doctor) {
                     event(new SendNotificationEvent(
                         $doctor,
                         $broadcast->title,
                         $broadcast->body,
                         'doctors',
-                        [],
+                        [
+                            'image_url' => $imageUrl,
+                            'video_url' => $videoUrl,
+                            'media_type' => $mediaType,
+                            'display_type' => $displayType,
+                            'is_skippable' => $isSkippable ? '1' : '0',
+                            'delivery_type' => $deliveryType,
+                        ],
                         $dedupeKey,
                         null,
                         $imageUrl

@@ -15,6 +15,11 @@ class NotificationBroadcast extends Model
         'title',
         'body',
         'image_path',
+        'video_path',
+        'media_type',
+        'delivery_type',
+        'display_type',
+        'is_skippable',
         'target_type',
         'target_specialty_ids',
         'status',
@@ -27,12 +32,20 @@ class NotificationBroadcast extends Model
         'target_specialty_ids' => 'array',
         'sent_at' => 'datetime',
         'recipient_count' => 'integer',
+        'is_skippable' => 'boolean',
     ];
 
     public function getImageUrlAttribute(): ?string
     {
         return $this->image_path
             ? Storage::disk('public')->url($this->image_path)
+            : null;
+    }
+
+    public function getVideoUrlAttribute(): ?string
+    {
+        return $this->video_path
+            ? Storage::disk('public')->url($this->video_path)
             : null;
     }
 

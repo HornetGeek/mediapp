@@ -39,6 +39,8 @@
                                                 <th>#</th>
                                                 <th>Title</th>
                                                 <th>Target</th>
+                                                <th>Delivery</th>
+                                                <th>Display</th>
                                                 <th>Recipients</th>
                                                 <th>Status</th>
                                                 <th>Sent at</th>
@@ -71,6 +73,15 @@
                                                             @endif
                                                         @endif
                                                     </td>
+                                                    <td>
+                                                        @php($deliveryLabels = ['both' => 'Push + In-app', 'push_only' => 'Push only', 'in_app_only' => 'In-app only'])
+                                                        <span class="badge bg-primary">{{ $deliveryLabels[$broadcast->delivery_type ?? 'both'] ?? 'Push + In-app' }}</span>
+                                                    </td>
+                                                    <td>
+                                                        <span class="badge bg-{{ ($broadcast->display_type ?? 'list') === 'modal' ? 'warning' : 'secondary' }}">
+                                                            {{ ucfirst($broadcast->display_type ?? 'list') }}
+                                                        </span>
+                                                    </td>
                                                     <td>{{ $broadcast->recipient_count }}</td>
                                                     <td>
                                                         @php
@@ -96,7 +107,7 @@
                                                 </tr>
                                             @empty
                                                 <tr>
-                                                    <td colspan="7" class="text-center">No broadcasts sent yet.</td>
+                                                    <td colspan="9" class="text-center">No broadcasts sent yet.</td>
                                                 </tr>
                                             @endforelse
                                         </tbody>

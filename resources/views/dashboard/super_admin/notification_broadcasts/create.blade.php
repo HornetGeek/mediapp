@@ -48,11 +48,56 @@
                             </div>
 
                             <div class="form-group mb-3">
+                                <label class="form-label">Delivery Type</label>
+                                <select name="delivery_type" id="delivery_type"
+                                    class="form-select @error('delivery_type') is-invalid @enderror" required>
+                                    <option value="both" {{ old('delivery_type', 'both') === 'both' ? 'selected' : '' }}>Push + In-app</option>
+                                    <option value="push_only" {{ old('delivery_type') === 'push_only' ? 'selected' : '' }}>Push only</option>
+                                    <option value="in_app_only" {{ old('delivery_type') === 'in_app_only' ? 'selected' : '' }}>In-app only</option>
+                                </select>
+                                @error('delivery_type')
+                                    <div class="alert alert-danger mt-2">{{ $message }}</div>
+                                @enderror
+                            </div>
+
+                            <div class="form-group mb-3" id="display_type_block">
+                                <label class="form-label">Display Type</label>
+                                <select name="display_type" id="display_type"
+                                    class="form-select @error('display_type') is-invalid @enderror">
+                                    <option value="list" {{ old('display_type', 'list') === 'list' ? 'selected' : '' }}>List</option>
+                                    <option value="modal" {{ old('display_type') === 'modal' ? 'selected' : '' }}>Modal</option>
+                                </select>
+                                @error('display_type')
+                                    <div class="alert alert-danger mt-2">{{ $message }}</div>
+                                @enderror
+                            </div>
+
+                            <div class="form-group mb-3" id="is_skippable_block">
+                                <div class="form-check">
+                                    <input type="hidden" name="is_skippable" value="0">
+                                    <input type="checkbox" name="is_skippable" id="is_skippable" value="1"
+                                        class="form-check-input" {{ old('is_skippable', '1') ? 'checked' : '' }}>
+                                    <label class="form-check-label" for="is_skippable">Skippable</label>
+                                </div>
+                                <small class="text-muted">When unchecked, modal cannot be dismissed by the user.</small>
+                            </div>
+
+                            <div class="form-group mb-3">
                                 <label class="form-label">Image (optional)</label>
                                 <input type="file" class="form-control @error('image') is-invalid @enderror"
-                                    name="image" accept="image/jpeg,image/png,image/webp">
+                                    name="image" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp">
                                 <small class="text-muted">JPG, PNG or WEBP up to 4 MB. Image is shown in the FCM popup.</small>
                                 @error('image')
+                                    <div class="alert alert-danger">{{ $message }}</div>
+                                @enderror
+                            </div>
+
+                            <div class="form-group mb-3" id="video_block">
+                                <label class="form-label">Video (optional)</label>
+                                <input type="file" class="form-control @error('video') is-invalid @enderror"
+                                    name="video" accept=".mp4,.mov,.webm,video/mp4,video/quicktime,video/webm">
+                                <small class="text-muted">MP4/MOV/WEBM up to 30 MB, max 20 seconds. In-app only — disabled when delivery is "Push only".</small>
+                                @error('video')
                                     <div class="alert alert-danger">{{ $message }}</div>
                                 @enderror
                             </div>
@@ -108,15 +153,43 @@
         (function () {
             var allRadio = document.getElementById('target_all');
             var specialtiesRadio = document.getElementById('target_specialties');
-            var block = document.getElementById('specialties_block');
+            var specialtiesBlock = document.getElementById('specialties_block');
+            var deliverySelect = document.getElementById('delivery_type');
+            var displaySelect = document.getElementById('display_type');
+            var displayBlock = document.getElementById('display_type_block');
+            var skippableBlock = document.getElementById('is_skippable_block');
+            var videoBlock = document.getElementById('video_block');
+            var videoInput = videoBlock ? videoBlock.querySelector('input[name="video"]') : null;
 
-            function refresh() {
-                block.style.display = specialtiesRadio.checked ? '' : 'none';
+            function refreshTarget() {
+                specialtiesBlock.style.display = specialtiesRadio.checked ? '' : 'none';
             }
 
-            allRadio.addEventListener('change', refresh);
-            specialtiesRadio.addEventListener('change', refresh);
-            refresh();
+            function refreshDeliveryDisplay() {
+                var delivery = deliverySelect.value;
+
+                if (delivery === 'push_only') {
+                    displaySelect.value = 'list';
+                    displayBlock.style.display = 'none';
+                    if (videoInput) {
+                        videoInput.value = '';
+                    }
+                    videoBlock.style.display = 'none';
+                } else {
+                    displayBlock.style.display = '';
+                    videoBlock.style.display = '';
+                }
+
+                skippableBlock.style.display = displaySelect.value === 'modal' ? '' : 'none';
+            }
+
+            allRadio.addEventListener('change', refreshTarget);
+            specialtiesRadio.addEventListener('change', refreshTarget);
+            deliverySelect.addEventListener('change', refreshDeliveryDisplay);
+            displaySelect.addEventListener('change', refreshDeliveryDisplay);
+
+            refreshTarget();
+            refreshDeliveryDisplay();
         })();
     </script>
 @endsection
