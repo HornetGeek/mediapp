@@ -24,6 +24,8 @@ class RepRegisterRequest extends FormRequest
             'company_catalog_id' => ['required_without:requested_company_name', 'nullable', 'integer', 'exists:rep_company_catalogs,id', 'prohibits:requested_company_name'],
             'requested_company_name' => ['required_without:company_catalog_id', 'nullable', 'string', 'max:255', 'prohibits:company_catalog_id'],
             'requested_line_name' => ['required', 'string', 'max:255'],
+            'requested_area_names' => ['nullable', 'array'],
+            'requested_area_names.*' => ['required', 'string', 'max:255'],
             'fcm_token' => ['nullable', 'string'],
         ];
     }
@@ -38,6 +40,8 @@ class RepRegisterRequest extends FormRequest
             'company_catalog_id' => 'Company',
             'requested_company_name' => 'Company Name',
             'requested_line_name' => 'Line Name',
+            'requested_area_names' => 'Area Names',
+            'requested_area_names.*' => 'Area Name',
             'fcm_token' => 'FCM Token',
         ];
     }

@@ -32,13 +32,14 @@ class AuthRepController extends Controller
             'company_catalog_id' => $data['company_catalog_id'] ?? null,
             'requested_company_name' => $data['requested_company_name'] ?? null,
             'requested_line_name' => $data['requested_line_name'],
+            'requested_area_names' => $data['requested_area_names'] ?? [],
             'registration_status' => $isCatalogCompany ? 'active' : 'pending',
             'daily_visits_limit' => $isCatalogCompany ? config('reps.self_registered_daily_visits_limit') : null,
             'status' => 'active',
             'fcm_token' => $data['fcm_token'] ?? null,
         ]);
 
-        $representative->load(['company', 'companyCatalog']);
+        $representative->load(['company', 'companyCatalog', 'areas', 'lines']);
 
         return ApiResponse::sendResponse(
             201,

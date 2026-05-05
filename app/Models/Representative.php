@@ -19,6 +19,7 @@ class Representative extends Authenticatable
         'company_catalog_id',
         'requested_company_name',
         'requested_line_name',
+        'requested_area_names',
         'password',
         'status',
         'registration_status',
@@ -27,6 +28,10 @@ class Representative extends Authenticatable
     ];
     protected $hidden = [
         'password',
+    ];
+
+    protected $casts = [
+        'requested_area_names' => 'array',
     ];
 
 

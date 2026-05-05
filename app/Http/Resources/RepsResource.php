@@ -21,6 +21,9 @@ class RepsResource extends JsonResource
             'email' => $this->email,
             'phone' => $this->phone,
             'requested_line_name' => $this->requested_line_name,
+            'requested_area_names' => $this->requested_area_names ?? [],
+            'work_areas' => $this->workAreas(),
+            'work_lines' => $this->workLines(),
             'status' => $this->status,
             'registration_status' => $this->registration_status ?? 'active',
             'can_book' => ($this->registration_status ?? 'active') === 'active',
@@ -47,5 +50,39 @@ class RepsResource extends JsonResource
             'company' => CompanyPayload::forRepresentative($this->resource),
             'created_at' => $this->created_at->toDateTimeString(),
         ];
+    }
+
+    private function workAreas()
+    {
+        $areaNames = collect($this->requested_area_names ?? []);
+
+        if ($this->relationLoaded('areas')) {
+            $areaNames = $areaNames->merge($this->areas->pluck('name'));
+        }
+
+        return $areaNames
+            ->filter(fn ($name) => is_string($name) && trim($name) !== '')
+            ->map(fn ($name) => trim($name))
+            ->unique()
+            ->values();
+    }
+
+    private function workLines()
+    {
+        $lineNames = collect();
+
+        if (!empty($this->requested_line_name)) {
+            $lineNames->push($this->requested_line_name);
+        }
+
+        if ($this->relationLoaded('lines')) {
+            $lineNames = $lineNames->merge($this->lines->pluck('name'));
+        }
+
+        return $lineNames
+            ->filter(fn ($name) => is_string($name) && trim($name) !== '')
+            ->map(fn ($name) => trim($name))
+            ->unique()
+            ->values();
     }
 }

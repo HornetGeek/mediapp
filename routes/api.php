@@ -2,6 +2,7 @@
 
 use App\Helpers\ApiResponse;
 use App\Http\Controllers\API\BannerAdController;
+use App\Http\Controllers\API\PrivacyPolicyController;
 use App\Http\Controllers\API\Admin\AuthAdminController;
 use App\Http\Controllers\API\Admin\CompaniessController;
 use App\Http\Controllers\API\Admin\LinesController;
@@ -54,6 +55,7 @@ use Illuminate\Support\Facades\Artisan;
 
 Route::post('/check-version', [AppVersionController::class, 'check']);
 Route::get('/banner-ads', [BannerAdController::class, 'index']);
+Route::get('/privacy-policy', PrivacyPolicyController::class);
 // ------------------ Auth SuperAdmin Routes
 
 

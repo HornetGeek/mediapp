@@ -103,11 +103,17 @@ class RepresentativeSelfRegistrationTest extends TestCase
             'password_confirmation' => 'password123',
             'company_catalog_id' => $catalog->id,
             'requested_line_name' => 'Line A',
+            'requested_area_names' => ['Nasr City', 'Maadi'],
         ]);
 
         $response->assertStatus(201)
             ->assertJsonPath('data.registration_status', 'active')
             ->assertJsonPath('data.requested_line_name', 'Line A')
+            ->assertJsonPath('data.requested_area_names.0', 'Nasr City')
+            ->assertJsonPath('data.requested_area_names.1', 'Maadi')
+            ->assertJsonPath('data.work_areas.0', 'Nasr City')
+            ->assertJsonPath('data.work_areas.1', 'Maadi')
+            ->assertJsonPath('data.work_lines.0', 'Line A')
             ->assertJsonPath('data.can_book', true)
             ->assertJsonPath('data.company.type', 'catalog')
             ->assertJsonPath('data.daily_visits_limit', 10);
@@ -120,6 +126,11 @@ class RepresentativeSelfRegistrationTest extends TestCase
             'registration_status' => 'active',
             'daily_visits_limit' => 10,
         ]);
+
+        $this->assertSame(
+            ['Nasr City', 'Maadi'],
+            Representative::where('email', 'self-rep@example.com')->first()->requested_area_names
+        );
     }
 
     public function test_other_company_registration_creates_pending_representative_that_can_only_login_and_profile(): void
@@ -132,9 +143,13 @@ class RepresentativeSelfRegistrationTest extends TestCase
             'password_confirmation' => 'password123',
             'requested_company_name' => 'Missing Pharma',
             'requested_line_name' => 'Line B',
+            'requested_area_names' => ['Giza', 'October'],
         ])->assertStatus(201)
             ->assertJsonPath('data.registration_status', 'pending')
             ->assertJsonPath('data.requested_line_name', 'Line B')
+            ->assertJsonPath('data.work_areas.0', 'Giza')
+            ->assertJsonPath('data.work_areas.1', 'October')
+            ->assertJsonPath('data.work_lines.0', 'Line B')
             ->assertJsonPath('data.can_book', false)
             ->assertJsonPath('data.company.type', 'requested');
 
@@ -148,6 +163,9 @@ class RepresentativeSelfRegistrationTest extends TestCase
             ->assertJsonPath('data.registration_status', 'pending')
             ->assertJsonPath('data.can_book', false)
             ->assertJsonPath('data.representative.requested_line_name', 'Line B')
+            ->assertJsonPath('data.representative.work_areas.0', 'Giza')
+            ->assertJsonPath('data.representative.work_areas.1', 'October')
+            ->assertJsonPath('data.representative.work_lines.0', 'Line B')
             ->assertJsonPath('data.error_code', 'REP_PENDING_APPROVAL');
 
         $token = $loginResponse->json('data.token');
@@ -156,7 +174,10 @@ class RepresentativeSelfRegistrationTest extends TestCase
             ->getJson('/api/reps/profile')
             ->assertStatus(200)
             ->assertJsonPath('data.registration_status', 'pending')
-            ->assertJsonPath('data.requested_line_name', 'Line B');
+            ->assertJsonPath('data.requested_line_name', 'Line B')
+            ->assertJsonPath('data.work_areas.0', 'Giza')
+            ->assertJsonPath('data.work_areas.1', 'October')
+            ->assertJsonPath('data.work_lines.0', 'Line B');
 
         $this->withHeader('Authorization', 'Bearer ' . $token)
             ->getJson('/api/reps/specialities')
@@ -374,6 +395,7 @@ class RepresentativeSelfRegistrationTest extends TestCase
             $table->unsignedBigInteger('company_catalog_id')->nullable();
             $table->string('requested_company_name')->nullable();
             $table->string('requested_line_name')->nullable();
+            $table->json('requested_area_names')->nullable();
             $table->string('name');
             $table->string('email')->unique();
             $table->string('phone')->unique();
