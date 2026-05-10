@@ -10,6 +10,7 @@ use App\Http\Controllers\dashboard\super_admin\CompaniesController;
 use App\Http\Controllers\dashboard\super_admin\DoctorsController;
 use App\Http\Controllers\dashboard\super_admin\NotificationBroadcastsController;
 use App\Http\Controllers\dashboard\super_admin\PackagesController;
+use App\Http\Controllers\dashboard\super_admin\PendingRepresentativesController;
 use App\Http\Controllers\dashboard\super_admin\SpecialitiesController;
 use App\Http\Controllers\dashboard\super_admin\SpecialtiesController;
 use App\Http\Controllers\dashboard\super_admin\SuperadminController;
@@ -101,6 +102,12 @@ Route::middleware(['auth', 'role:super_admin'])->group(function () {
             Route::get('visits/report/pdf/', 'generateVisitReportPDF')->name('visits.report.pdf');
             Route::get('visits/report/csv/{bookId}', 'generateVisitsReportByIdCSV')->name('visitsId.report.csv');
             Route::get('visits/report/pdf/{bookId}', 'generateVisitReportByIdPDF')->name('visitsId.report.pdf');
+        });
+
+        Route::controller(PendingRepresentativesController::class)->group(function () {
+            Route::get('pending-representatives', 'index')->name('pending-representatives.index');
+            Route::post('pending-representatives/{id}/approve', 'approve')->name('pending-representatives.approve');
+            Route::post('pending-representatives/{id}/reject', 'reject')->name('pending-representatives.reject');
         });
 
 

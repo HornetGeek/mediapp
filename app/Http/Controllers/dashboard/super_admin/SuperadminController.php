@@ -9,13 +9,14 @@ use App\Models\Company;
 use App\Models\Doctors;
 use App\Models\FeedbackEmail;
 use App\Models\User;
+use App\Services\AppVersionRemoteConfigService;
 use Illuminate\Http\Request;
 
 class SuperadminController extends Controller
 {
     //
 
-    public function index()
+    public function index(AppVersionRemoteConfigService $remoteConfigService)
     {
         $confirmedVisits = Appointment::where('status', 'confirmed')->count();
         // $pendingVisits = Appointment::where('status', 'pending')->count();
@@ -37,6 +38,8 @@ class SuperadminController extends Controller
                 $forced[$appType][$platform] = (int) ($settings[$key]->is_forced ?? 0);
             }
         }
+
+        [$versions, $forced] = $remoteConfigService->applyToDashboardValues($versions, $forced);
 
         $data = [
             'total_doctors' => $totalDoctors,
@@ -69,7 +72,7 @@ class SuperadminController extends Controller
         return redirect()->back()->with('success', 'Save email feedback successfully!');
     }
 
-    public function storeAppVersions(Request $request)
+    public function storeAppVersions(Request $request, AppVersionRemoteConfigService $remoteConfigService)
     {
         $request->validate([
             'apps' => 'required|array',
@@ -95,9 +98,12 @@ class SuperadminController extends Controller
             'apps.doctor.ios.is_forced' => 'required|boolean',
         ]);
 
+        $apps = $request->input('apps');
+        $remoteConfigPublished = $remoteConfigService->publishFromDashboardPayload($apps);
+
         foreach (AppVersion::SUPPORTED_APP_TYPES as $appType) {
             foreach (AppVersion::SUPPORTED_PLATFORMS as $platform) {
-                $platformData = $request->input("apps.$appType.$platform");
+                $platformData = $apps[$appType][$platform];
 
                 AppVersion::updateOrCreate(
                     [
@@ -110,6 +116,10 @@ class SuperadminController extends Controller
                     ]
                 );
             }
+        }
+
+        if (!$remoteConfigPublished) {
+            return redirect()->back()->with('error', 'App versions saved locally, but Firebase Remote Config was not updated.');
         }
 
         return redirect()->back()->with('success', 'App versions updated successfully!');
