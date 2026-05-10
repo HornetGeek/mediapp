@@ -49,6 +49,12 @@
                         </a>
                     </li>
                     <li class="pc-item">
+                        <a href="{{ route('pending-representatives.index') }}" class="pc-link">
+                            <span class="pc-micon"><i class="ti ti-user-check"></i></span>
+                            <span class="pc-mtext">Pending Reps</span>
+                        </a>
+                    </li>
+                    <li class="pc-item">
                         <a href="{{ route('visits.index') }}" class="pc-link">
                             <span class="pc-micon"><i class="ti ti-hierarchy-2"></i></span>
                             <span class="pc-mtext">Visitis</span>
