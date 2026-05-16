@@ -2,10 +2,8 @@
 
 namespace App\Http\Requests;
 
-use App\Helpers\ApiResponse;
 use App\Traits\FailedValidationJson;
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Validation\Rules\Password;
 
 class DoctorsRequest extends FormRequest
 {
@@ -16,6 +14,15 @@ class DoctorsRequest extends FormRequest
     public function authorize(): bool
     {
         return true;
+    }
+
+    protected function prepareForValidation(): void
+    {
+        if ($this->has('phone')) {
+            $this->merge([
+                'phone' => $this->normalizePhone((string) $this->input('phone')),
+            ]);
+        }
     }
 
     /**
@@ -29,7 +36,7 @@ class DoctorsRequest extends FormRequest
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'email', 'max:255', 'unique:doctors'],
             'phone' => ['required', 'string', 'max:255'],
-            'password' => ['required', 'confirmed', Password::defaults()],
+            'password' => ['required', 'string', 'min:6', 'confirmed'],
             'address_1' => ['required', 'string', 'max:255'],
             'specialty_id' => ['nullable', 'exists:specialties,id'],
 
@@ -38,6 +45,30 @@ class DoctorsRequest extends FormRequest
             // 'availabilities.*.date' => ['date'],
             // 'availabilities.*.start_time' => ['date_format:H:i'],
             // 'availabilities.*.end_time' => ['date_format:H:i'],
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'name.required' => 'Please enter the doctor name.',
+            'name.string' => 'Doctor name must be text.',
+            'name.max' => 'Doctor name must not exceed 255 characters.',
+            'email.required' => 'Please enter the doctor email.',
+            'email.email' => 'Please enter a valid doctor email address.',
+            'email.max' => 'Doctor email must not exceed 255 characters.',
+            'email.unique' => 'This email is already registered as a doctor.',
+            'phone.required' => 'Please enter the doctor phone number.',
+            'phone.string' => 'Doctor phone number must be text.',
+            'phone.max' => 'Doctor phone number must not exceed 255 characters.',
+            'password.required' => 'Please enter a password.',
+            'password.string' => 'Password must be text.',
+            'password.confirmed' => 'Password confirmation does not match.',
+            'password.min' => 'Password must be at least 6 characters.',
+            'address_1.required' => 'Please enter the doctor address.',
+            'address_1.string' => 'Doctor address must be text.',
+            'address_1.max' => 'Doctor address must not exceed 255 characters.',
+            'specialty_id.exists' => 'Selected specialty was not found.',
         ];
     }
 
@@ -55,9 +86,20 @@ class DoctorsRequest extends FormRequest
             'password' => 'Password',
             'address_1' => 'Address 1',
             'address_2' => 'Address 2',
+            'specialty_id' => 'Specialty',
             'availabilities.*.date' => 'Date',
             'availabilities.*.start_time' => 'Start Time',
             'availabilities.*.end_time' => 'End Time',
         ];
+    }
+
+    private function normalizePhone(string $phone): string
+    {
+        $trimmed = trim($phone);
+        $prefix = str_starts_with($trimmed, '+') ? '+' : '';
+        $digits = preg_replace('/\D+/', '', $trimmed) ?? '';
+        $normalized = $prefix . $digits;
+
+        return preg_replace('/^(\+?20|0020)0(?=1)/', '$1', $normalized) ?? $normalized;
     }
 }

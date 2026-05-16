@@ -227,42 +227,45 @@ Route::prefix('reps')->group(function () {
         Route::controller(RepsController::class)->group(function () {
             Route::get('profile', 'getRepsProfile');
             Route::get('notifications', 'getNotifications');
-            Route::put('/notifications/read', 'markAllNotificationsAsRead');
-            Route::put('/notifications/{id}/read', 'markNotificationAsRead');
-            Route::delete('/notifications/{id}', 'deleteNotification');
-            Route::delete('/reps-notifications/clear', 'clearAllNotifications');
+            Route::get('visits/balance', 'getVisitsBalance');
+            Route::get('specialities', 'get_Speciality');
+            Route::get('/doctors/all', 'getAvailableTimeForDoctor');
+            Route::get('/doctors/search', 'filterDoctors');
+            Route::get('/docotr/{id}', 'getDoctorProfile');
+            Route::get('/booked/appointments', 'getRepsAppointments');
+            Route::get('appointments/by-status', 'getAppointmentsByStatus');
+            Route::get('/doctorsBySpeciality', 'getDoctorsBySpeciality');
+            Route::get('/appointments/cancelled', 'getCancelledAppointments');
+            Route::get('/appointments/pending', 'getPendingAppointments');
+            Route::get('/appointments/confirmed', 'getConfirmedAppointments');
+            Route::get('/appointments/lefting', 'getLeftingAppointments');
+            Route::get('/appointments/filtration', 'filterAppointmentsByDateAndSpecialty');
+            Route::get('/appointments-beforTwo-days', 'getAppointmentsNowAndBeforeTwoDay');
+            Route::get('/appointments/suspended', 'getSuspendedAppointments');
 
             Route::middleware('rep.active')->group(function () {
-                Route::get('visits/balance', 'getVisitsBalance');
-                Route::get('specialities', 'get_Speciality');
-                Route::get('/doctors/all', 'getAvailableTimeForDoctor');
-                Route::get('/doctors/search', 'filterDoctors');
-                Route::get('/docotr/{id}', 'getDoctorProfile');
+                Route::put('/notifications/read', 'markAllNotificationsAsRead');
+                Route::put('/notifications/{id}/read', 'markNotificationAsRead');
+                Route::delete('/notifications/{id}', 'deleteNotification');
+                Route::delete('/reps-notifications/clear', 'clearAllNotifications');
                 Route::post('/booking', 'bookAppointment');
-                Route::get('/booked/appointments', 'getRepsAppointments');
                 Route::put('/cancel-appointment/{book_id}', 'cancellationBooking');
                 Route::put('/completed-appointment/{book_id}', 'completedBooking');
                 Route::delete('/delete-appointment/{book_id}', 'deleteAppointment');
-                Route::get('appointments/by-status', 'getAppointmentsByStatus');
                 Route::put('appointment/change-status', 'changeAppointmentStatus');
-                Route::get('/doctorsBySpeciality', 'getDoctorsBySpeciality');
-                Route::get('/appointments/cancelled', 'getCancelledAppointments');
-                Route::get('/appointments/pending', 'getPendingAppointments');
-                Route::get('/appointments/confirmed', 'getConfirmedAppointments');
-                Route::get('/appointments/lefting', 'getLeftingAppointments');
-                Route::get('/appointments/filtration', 'filterAppointmentsByDateAndSpecialty');
-                Route::get('/appointments-beforTwo-days', 'getAppointmentsNowAndBeforeTwoDay');
-                Route::get('/appointments/suspended', 'getSuspendedAppointments');
             });
 
         });
 
         // Favorite Doctors
-        Route::middleware('rep.active')->controller(RepFavoriteDoctorController::class)->group(function () {
-            Route::post('/add-favorite-doctor', 'addFavoriteDoctor');
-            Route::delete('/remove-favorite-doctor', 'removeFavoriteDoctor');
+        Route::controller(RepFavoriteDoctorController::class)->group(function () {
             Route::get('/favorite-doctors', 'list');
             Route::get('/search/favorite-doctors', 'searchFavoriteDoctors');
+
+            Route::middleware('rep.active')->group(function () {
+                Route::post('/add-favorite-doctor', 'addFavoriteDoctor');
+                Route::delete('/remove-favorite-doctor', 'removeFavoriteDoctor');
+            });
         });
     });
 });

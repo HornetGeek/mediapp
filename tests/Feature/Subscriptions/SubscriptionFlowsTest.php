@@ -392,7 +392,9 @@ class SubscriptionFlowsTest extends TestCase
 
         $response->assertStatus(422);
         $response->assertJsonPath('code', 422);
-        $response->assertJsonPath('message', 'Validation Error');
+        $response->assertJsonPath('message', 'The Email has already been taken.');
+        $response->assertJsonPath('data.error_code', 'VALIDATION_ERROR');
+        $response->assertJsonPath('data.errors.email.0', 'The Email has already been taken.');
     }
 
     public function test_super_admin_api_create_company_accepts_short_password(): void

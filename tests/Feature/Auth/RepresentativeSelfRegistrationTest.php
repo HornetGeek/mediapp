@@ -98,9 +98,9 @@ class RepresentativeSelfRegistrationTest extends TestCase
         $response = $this->postJson('/api/reps/register', [
             'name' => 'Self Rep',
             'email' => 'self-rep@example.com',
-            'phone' => '01000000111',
-            'password' => 'password123',
-            'password_confirmation' => 'password123',
+            'phone' => '+2001000000111',
+            'password' => 'abc123',
+            'password_confirmation' => 'abc123',
             'company_catalog_id' => $catalog->id,
             'requested_line_name' => 'Line A',
             'requested_area_names' => ['Nasr City', 'Maadi'],
@@ -116,10 +116,12 @@ class RepresentativeSelfRegistrationTest extends TestCase
             ->assertJsonPath('data.work_lines.0', 'Line A')
             ->assertJsonPath('data.can_book', true)
             ->assertJsonPath('data.company.type', 'catalog')
+            ->assertJsonPath('data.phone', '+201000000111')
             ->assertJsonPath('data.daily_visits_limit', 10);
 
         $this->assertDatabaseHas('representatives', [
             'email' => 'self-rep@example.com',
+            'phone' => '+201000000111',
             'company_id' => null,
             'company_catalog_id' => $catalog->id,
             'requested_line_name' => 'Line A',
@@ -133,8 +135,18 @@ class RepresentativeSelfRegistrationTest extends TestCase
         );
     }
 
-    public function test_other_company_registration_creates_pending_representative_that_can_only_login_and_profile(): void
+    public function test_other_company_registration_creates_pending_representative_with_read_only_access(): void
     {
+        $specialty = Specialty::create(['name' => 'Cardiology']);
+        $doctor = Doctors::create([
+            'specialty_id' => $specialty->id,
+            'name' => 'Read Only Doctor',
+            'email' => 'read-only-doctor@example.com',
+            'phone' => '01099999999',
+            'password' => Hash::make('password123'),
+            'status' => 'active',
+        ]);
+
         $this->postJson('/api/reps/register', [
             'name' => 'Other Rep',
             'email' => 'other-rep@example.com',
@@ -181,6 +193,43 @@ class RepresentativeSelfRegistrationTest extends TestCase
 
         $this->withHeader('Authorization', 'Bearer ' . $token)
             ->getJson('/api/reps/specialities')
+            ->assertStatus(200);
+
+        $this->withHeader('Authorization', 'Bearer ' . $token)
+            ->getJson('/api/reps/doctors/all')
+            ->assertStatus(200);
+
+        $this->withHeader('Authorization', 'Bearer ' . $token)
+            ->getJson('/api/reps/booked/appointments')
+            ->assertStatus(200);
+
+        $this->withHeader('Authorization', 'Bearer ' . $token)
+            ->getJson('/api/reps/visits/balance')
+            ->assertStatus(200);
+
+        $this->withHeader('Authorization', 'Bearer ' . $token)
+            ->postJson('/api/reps/booking', [
+                'doctors_id' => $doctor->id,
+                'date' => now()->addDay()->toDateString(),
+                'start_time' => '10:00',
+            ])
+            ->assertStatus(403)
+            ->assertJsonPath('data.error_code', 'REP_PENDING_APPROVAL');
+
+        $this->withHeader('Authorization', 'Bearer ' . $token)
+            ->putJson('/api/reps/cancel-appointment/1')
+            ->assertStatus(403)
+            ->assertJsonPath('data.error_code', 'REP_PENDING_APPROVAL');
+
+        $this->withHeader('Authorization', 'Bearer ' . $token)
+            ->postJson('/api/reps/add-favorite-doctor', [
+                'doctor_id' => $doctor->id,
+            ])
+            ->assertStatus(403)
+            ->assertJsonPath('data.error_code', 'REP_PENDING_APPROVAL');
+
+        $this->withHeader('Authorization', 'Bearer ' . $token)
+            ->putJson('/api/reps/notifications/read')
             ->assertStatus(403)
             ->assertJsonPath('data.error_code', 'REP_PENDING_APPROVAL');
     }
@@ -204,7 +253,10 @@ class RepresentativeSelfRegistrationTest extends TestCase
             'password_confirmation' => 'password123',
             'company_catalog_id' => 999,
             'requested_line_name' => 'Line C',
-        ])->assertStatus(422);
+        ])->assertStatus(422)
+            ->assertJsonPath('message', 'This email is already registered as a representative.')
+            ->assertJsonPath('data.error_code', 'VALIDATION_ERROR')
+            ->assertJsonPath('data.errors.email.0', 'This email is already registered as a representative.');
 
         $this->postJson('/api/reps/register', [
             'name' => 'Invalid Company Rep',
@@ -214,7 +266,10 @@ class RepresentativeSelfRegistrationTest extends TestCase
             'password_confirmation' => 'password123',
             'company_catalog_id' => 999,
             'requested_line_name' => 'Line C',
-        ])->assertStatus(422);
+        ])->assertStatus(422)
+            ->assertJsonPath('message', 'Selected company was not found.')
+            ->assertJsonPath('data.error_code', 'VALIDATION_ERROR')
+            ->assertJsonPath('data.errors.company_catalog_id.0', 'Selected company was not found.');
     }
 
     public function test_self_registration_requires_requested_line_name(): void
@@ -233,7 +288,151 @@ class RepresentativeSelfRegistrationTest extends TestCase
             'password' => 'password123',
             'password_confirmation' => 'password123',
             'company_catalog_id' => $catalog->id,
-        ])->assertStatus(422);
+        ])->assertStatus(422)
+            ->assertJsonPath('message', 'Please enter the line name.')
+            ->assertJsonPath('data.error_code', 'VALIDATION_ERROR')
+            ->assertJsonPath('data.errors.requested_line_name.0', 'Please enter the line name.');
+    }
+
+    public function test_rep_registration_returns_clear_errors_for_missing_company_and_password_mismatch(): void
+    {
+        $missingCompanyResponse = $this->postJson('/api/reps/register', [
+            'name' => 'Missing Company Rep',
+            'email' => 'missing-company-rep@example.com',
+            'phone' => '01000000999',
+            'password' => 'password123',
+            'password_confirmation' => 'password123',
+            'requested_line_name' => 'Line D',
+        ]);
+
+        $missingCompanyResponse->assertStatus(422)
+            ->assertJsonPath('message', 'Please select a listed company or enter your company name.')
+            ->assertJsonPath('data.error_code', 'VALIDATION_ERROR')
+            ->assertJsonPath('data.errors.company_catalog_id.0', 'Please select a listed company or enter your company name.')
+            ->assertJsonPath('data.errors.requested_company_name.0', 'Please select a listed company or enter your company name.');
+
+        $passwordMismatchResponse = $this->postJson('/api/reps/register', [
+            'name' => 'Password Mismatch Rep',
+            'email' => 'password-mismatch-rep@example.com',
+            'phone' => '01000001010',
+            'password' => 'password123',
+            'password_confirmation' => 'different123',
+            'requested_company_name' => 'Missing Pharma',
+            'requested_line_name' => 'Line E',
+        ]);
+
+        $passwordMismatchResponse->assertStatus(422)
+            ->assertJsonPath('message', 'Password confirmation does not match.')
+            ->assertJsonPath('data.error_code', 'VALIDATION_ERROR')
+            ->assertJsonPath('data.errors.password.0', 'Password confirmation does not match.');
+
+        $shortPasswordResponse = $this->postJson('/api/reps/register', [
+            'name' => 'Short Password Rep',
+            'email' => 'short-password-rep@example.com',
+            'phone' => '01000001011',
+            'password' => 'abc12',
+            'password_confirmation' => 'abc12',
+            'requested_company_name' => 'Missing Pharma',
+            'requested_line_name' => 'Line F',
+        ]);
+
+        $shortPasswordResponse->assertStatus(422)
+            ->assertJsonPath('message', 'Password must be at least 6 characters.')
+            ->assertJsonPath('data.error_code', 'VALIDATION_ERROR')
+            ->assertJsonPath('data.errors.password.0', 'Password must be at least 6 characters.');
+    }
+
+    public function test_doctor_registration_normalizes_phone_and_accepts_six_character_password(): void
+    {
+        $specialty = Specialty::create(['name' => 'Cardiology']);
+
+        $response = $this->postJson('/api/doctor/register', [
+            'name' => 'Normalized Phone Doctor',
+            'email' => 'normalized-phone-doctor@example.com',
+            'phone' => '002001033333333',
+            'password' => 'abc123',
+            'password_confirmation' => 'abc123',
+            'address_1' => 'Nasr City',
+            'specialty_id' => $specialty->id,
+        ]);
+
+        $response->assertStatus(201);
+
+        $this->assertDatabaseHas('doctors', [
+            'email' => 'normalized-phone-doctor@example.com',
+            'phone' => '00201033333333',
+        ]);
+    }
+
+    public function test_doctor_registration_returns_clear_validation_errors(): void
+    {
+        $specialty = Specialty::create(['name' => 'Cardiology']);
+
+        Doctors::create([
+            'specialty_id' => $specialty->id,
+            'name' => 'Existing Doctor',
+            'email' => 'existing-doctor@example.com',
+            'phone' => '01011111111',
+            'password' => Hash::make('password123'),
+            'address_1' => 'Nasr City',
+            'status' => 'active',
+        ]);
+
+        $duplicateEmailResponse = $this->postJson('/api/doctor/register', [
+            'name' => 'Duplicate Doctor',
+            'email' => 'existing-doctor@example.com',
+            'phone' => '01022222222',
+            'password' => 'password123',
+            'password_confirmation' => 'password123',
+            'address_1' => 'Maadi',
+            'specialty_id' => $specialty->id,
+        ]);
+
+        $duplicateEmailResponse->assertStatus(422)
+            ->assertJsonPath('message', 'This email is already registered as a doctor.')
+            ->assertJsonPath('data.error_code', 'VALIDATION_ERROR')
+            ->assertJsonPath('data.errors.email.0', 'This email is already registered as a doctor.');
+
+        $missingFieldsResponse = $this->postJson('/api/doctor/register', []);
+
+        $missingFieldsResponse->assertStatus(422)
+            ->assertJsonPath('message', 'Please enter the doctor name.')
+            ->assertJsonPath('data.error_code', 'VALIDATION_ERROR')
+            ->assertJsonPath('data.errors.name.0', 'Please enter the doctor name.')
+            ->assertJsonPath('data.errors.email.0', 'Please enter the doctor email.')
+            ->assertJsonPath('data.errors.phone.0', 'Please enter the doctor phone number.')
+            ->assertJsonPath('data.errors.password.0', 'Please enter a password.')
+            ->assertJsonPath('data.errors.address_1.0', 'Please enter the doctor address.');
+
+        $invalidSpecialtyResponse = $this->postJson('/api/doctor/register', [
+            'name' => 'Invalid Specialty Doctor',
+            'email' => 'invalid-specialty-doctor@example.com',
+            'phone' => '01033333333',
+            'password' => 'password123',
+            'password_confirmation' => 'password123',
+            'address_1' => 'Giza',
+            'specialty_id' => 999999,
+        ]);
+
+        $invalidSpecialtyResponse->assertStatus(422)
+            ->assertJsonPath('message', 'Selected specialty was not found.')
+            ->assertJsonPath('data.error_code', 'VALIDATION_ERROR')
+            ->assertJsonPath('data.errors.specialty_id.0', 'Selected specialty was not found.');
+
+        $shortPasswordResponse = $this->postJson('/api/doctor/register', [
+            'name' => 'Short Password Doctor',
+            'email' => 'short-password-doctor@example.com',
+            'phone' => '01044444444',
+            'password' => 'abc12',
+            'password_confirmation' => 'abc12',
+            'address_1' => 'Giza',
+            'specialty_id' => $specialty->id,
+        ]);
+
+        $shortPasswordResponse->assertStatus(422)
+            ->assertJsonPath('message', 'Password must be at least 6 characters.')
+            ->assertJsonPath('data.error_code', 'VALIDATION_ERROR')
+            ->assertJsonPath('data.errors.password.0', 'Password must be at least 6 characters.');
     }
 
     public function test_existing_company_representative_login_still_blocks_inactive_company(): void
@@ -316,6 +515,9 @@ class RepresentativeSelfRegistrationTest extends TestCase
         foreach ([
             'personal_access_tokens',
             'appointments',
+            'doctor_representative_favorite',
+            'doctor_blocks',
+            'doctor_availabilities',
             'representatives',
             'companies',
             'rep_company_catalogs',
@@ -382,10 +584,32 @@ class RepresentativeSelfRegistrationTest extends TestCase
             $table->string('email')->unique();
             $table->string('phone')->nullable();
             $table->string('password');
+            $table->string('address_1')->nullable();
+            $table->string('address_2')->nullable();
             $table->enum('status', ['active', 'busy'])->default('active');
             $table->date('from_date')->nullable();
             $table->date('to_date')->nullable();
             $table->text('fcm_token')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('doctor_availabilities', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('doctors_id');
+            $table->string('date');
+            $table->time('start_time');
+            $table->time('end_time');
+            $table->boolean('ends_next_day')->default(false);
+            $table->unsignedInteger('max_reps_per_range')->default(1);
+            $table->enum('status', ['available', 'canceled'])->default('available');
+            $table->timestamps();
+        });
+
+        Schema::create('doctor_blocks', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('doctors_id');
+            $table->unsignedBigInteger('blockable_id');
+            $table->string('blockable_type');
             $table->timestamps();
         });
 
@@ -404,6 +628,14 @@ class RepresentativeSelfRegistrationTest extends TestCase
             $table->enum('registration_status', ['active', 'pending', 'rejected'])->default('active');
             $table->unsignedInteger('daily_visits_limit')->nullable();
             $table->text('fcm_token')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('doctor_representative_favorite', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('doctors_id');
+            $table->unsignedBigInteger('representative_id');
+            $table->boolean('is_fav')->default(false);
             $table->timestamps();
         });
 
