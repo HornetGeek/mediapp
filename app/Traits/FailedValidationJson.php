@@ -10,7 +10,11 @@ trait FailedValidationJson
 {
     protected function failedValidation(Validator $validator)
     {
-        $response = ApiResponse::sendResponse(422, 'Validation Error', $validator->errors()->all());
+        $response = ApiResponse::sendResponse(422, $validator->errors()->first(), [
+            'error_code' => 'VALIDATION_ERROR',
+            'errors' => $validator->errors()->toArray(),
+        ]);
+
         throw new ValidationException($validator, $response);
     }
 }
