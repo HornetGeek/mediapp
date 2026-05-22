@@ -23,7 +23,9 @@ class AvailableTimeResource extends JsonResource
             'start_time' => Carbon::parse($this->start_time)->format('h:i A'), // 12h format
             'end_time' => Carbon::parse($this->end_time)->format('h:i A'),
             'ends_next_day' => (bool) $this->ends_next_day,
-            'max_reps_per_range' => max(1, (int) ($this->max_reps_per_range ?? 1)),
+            'max_reps_per_range' => $this->max_reps_per_range === null
+                ? null
+                : max(1, (int) $this->max_reps_per_range),
             'visit_time_type' => $this->visit_time_type ?: 'between',
             'status' => $this->status,
         ];

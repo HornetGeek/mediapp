@@ -160,13 +160,16 @@ class DoctorAvailabilityCrudTest extends TestCase
         $doctor = $this->createDoctor('doctor-save-max-reps-invalid@example.com', '01111111258');
         Sanctum::actingAs($doctor, ['doctor']);
 
-        $zeroResponse = $this->putJson('/api/doctor/save-available-time', [
-            'date' => 'monday',
-            'start_time' => '09:00 AM',
-            'end_time' => '10:00 AM',
-            'max_reps_per_range' => 0,
-        ]);
-        $zeroResponse->assertStatus(422);
+        foreach ([0, -1, 'many'] as $maxRepsPerRange) {
+            $response = $this->putJson('/api/doctor/save-available-time', [
+                'date' => 'monday',
+                'start_time' => '09:00 AM',
+                'end_time' => '10:00 AM',
+                'max_reps_per_range' => $maxRepsPerRange,
+            ]);
+
+            $response->assertStatus(422);
+        }
     }
 
     public function test_save_available_time_accepts_and_returns_visit_time_type_values(): void
@@ -230,7 +233,7 @@ class DoctorAvailabilityCrudTest extends TestCase
         ]);
     }
 
-    public function test_save_available_time_defaults_max_reps_per_range_to_two_when_omitted(): void
+    public function test_save_available_time_stores_open_max_reps_per_range_when_omitted(): void
     {
         $doctor = $this->createDoctor('doctor-save-max-reps-default@example.com', '01111111259');
         Sanctum::actingAs($doctor, ['doctor']);
@@ -242,14 +245,14 @@ class DoctorAvailabilityCrudTest extends TestCase
         ]);
 
         $response->assertStatus(200);
-        $response->assertJsonPath('data.available_times.0.max_reps_per_range', 2);
+        $response->assertJsonPath('data.available_times.0.max_reps_per_range', null);
 
         $this->assertDatabaseHas('doctor_availabilities', [
             'doctors_id' => $doctor->id,
             'date' => 'wednesday',
             'start_time' => '13:00:00',
             'end_time' => '14:00:00',
-            'max_reps_per_range' => 2,
+            'max_reps_per_range' => null,
             'status' => 'available',
         ]);
     }
@@ -277,7 +280,7 @@ class DoctorAvailabilityCrudTest extends TestCase
         ]);
     }
 
-    public function test_update_available_time_updates_max_reps_per_range_and_keeps_visit_time_type_when_omitted(): void
+    public function test_update_available_time_updates_max_reps_per_range_and_opens_capacity_when_omitted(): void
     {
         $doctor = $this->createDoctor('doctor-update-max-reps@example.com', '01111111260');
         $availability = $this->createAvailability($doctor, 'monday', '09:00:00', '10:00:00', 'available', false, 2, 'before');
@@ -305,12 +308,12 @@ class DoctorAvailabilityCrudTest extends TestCase
             'end_time' => '10:00 AM',
         ]);
         $updateWithoutFieldResponse->assertStatus(200);
-        $updateWithoutFieldResponse->assertJsonPath('data.max_reps_per_range', 2);
+        $updateWithoutFieldResponse->assertJsonPath('data.max_reps_per_range', null);
         $updateWithoutFieldResponse->assertJsonPath('data.visit_time_type', 'before');
 
         $this->assertDatabaseHas('doctor_availabilities', [
             'id' => $availability->id,
-            'max_reps_per_range' => 2,
+            'max_reps_per_range' => null,
             'visit_time_type' => 'before',
         ]);
     }
@@ -966,6 +969,42 @@ class DoctorAvailabilityCrudTest extends TestCase
         ]);
         $allowedResponse->assertStatus(201);
         $allowedResponse->assertJsonPath('data.status', 'pending');
+    }
+
+    public function test_representative_booking_skips_range_capacity_when_max_reps_per_range_is_open(): void
+    {
+        $bookingDate = Carbon::now('Africa/Cairo')->addDays(3)->toDateString();
+        $bookingWeekday = strtolower(Carbon::parse($bookingDate, 'Africa/Cairo')->format('l'));
+        $doctor = $this->createDoctor('rep-book-open-capacity@example.com', '01111111266');
+        $this->createAvailability(
+            $doctor,
+            $bookingWeekday,
+            '09:00:00',
+            '11:00:00',
+            'available',
+            false,
+            null
+        );
+
+        foreach (['09:00 AM', '09:05 AM', '09:10 AM'] as $index => $startTime) {
+            $rep = $this->createRepresentative(
+                'rep-book-open-capacity-' . $index . '@example.com',
+                '0101111130' . $index
+            );
+            $rep->company()->update(['visits_per_day' => 5]);
+            Sanctum::actingAs($rep, ['representative']);
+
+            $response = $this->postJson('/api/reps/booking', [
+                'doctors_id' => $doctor->id,
+                'date' => $bookingDate,
+                'start_time' => $startTime,
+            ]);
+
+            $response->assertStatus(201);
+            $response->assertJsonPath('data.status', 'pending');
+        }
+
+        $this->assertSame(3, Appointment::where('doctors_id', $doctor->id)->count());
     }
 
     public function test_representative_doctor_listing_realtime_normalizes_expired_busy_status(): void
@@ -1923,7 +1962,7 @@ class DoctorAvailabilityCrudTest extends TestCase
         string $end,
         string $status = 'available',
         bool $endsNextDay = false,
-        int $maxRepsPerRange = 2,
+        ?int $maxRepsPerRange = 2,
         string $visitTimeType = 'between'
     ): DoctorAvailability
     {
@@ -2089,6 +2128,7 @@ class DoctorAvailabilityCrudTest extends TestCase
             $table->unsignedBigInteger('doctors_id');
             $table->unsignedBigInteger('representative_id');
             $table->unsignedBigInteger('company_id');
+            $table->unsignedBigInteger('company_catalog_id')->nullable();
             $table->time('start_time');
             $table->time('end_time');
             $table->date('date')->nullable();
@@ -2105,7 +2145,7 @@ class DoctorAvailabilityCrudTest extends TestCase
             $table->time('start_time');
             $table->time('end_time');
             $table->boolean('ends_next_day')->default(false);
-            $table->unsignedInteger('max_reps_per_range')->default(2);
+            $table->unsignedInteger('max_reps_per_range')->nullable()->default(null);
             $table->enum('visit_time_type', ['before', 'after', 'between'])->nullable()->default('between');
             $table->enum('status', ['available', 'canceled', 'booked', 'busy'])->default('available');
             $table->timestamps();
