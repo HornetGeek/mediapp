@@ -413,11 +413,12 @@ class RepsController extends Controller
             return ApiResponse::sendResponse(422, 'Requested time is outside doctor availability', []);
         }
 
-        if (!$this->hasRemainingRangeCapacity(
+        $maxRepsPerRange = $availabilityOccurrence['availability']->max_reps_per_range;
+        if ($maxRepsPerRange !== null && !$this->hasRemainingRangeCapacity(
             (int) $request->doctors_id,
             $availabilityOccurrence['start_at'],
             $availabilityOccurrence['end_at'],
-            (int) ($availabilityOccurrence['availability']->max_reps_per_range ?? 1)
+            (int) $maxRepsPerRange
         )) {
             return ApiResponse::sendResponse(409, $rangeCapacityReachedMessage, []);
         }

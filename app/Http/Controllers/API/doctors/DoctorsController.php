@@ -220,11 +220,7 @@ class DoctorsController extends Controller
 
         $requestedMaxRepsPerRange = isset($validated['max_reps_per_range'])
             ? (int) $validated['max_reps_per_range']
-            : $this->calculateMaxRepsPerRangeUpperBound(
-                $normalizedTimes['start_time'],
-                $normalizedTimes['end_time'],
-                $normalizedTimes['ends_next_day']
-            );
+            : null;
 
         if ($this->hasAvailabilityOverlap(
             (int) $doctor->id,
@@ -293,11 +289,7 @@ class DoctorsController extends Controller
 
         $requestedMaxRepsPerRange = isset($validated['max_reps_per_range'])
             ? (int) $validated['max_reps_per_range']
-            : $this->calculateMaxRepsPerRangeUpperBound(
-                $normalizedTimes['start_time'],
-                $normalizedTimes['end_time'],
-                $normalizedTimes['ends_next_day']
-            );
+            : null;
 
         $existingAvailabilityWeekday = $this->normalizeStoredAvailabilityWeekday((string) $availability->date);
         if ($existingAvailabilityWeekday === null) {
@@ -1144,28 +1136,6 @@ class DoctorsController extends Controller
             'end_time' => $normalizedEndTime,
             'ends_next_day' => $endsNextDay,
         ];
-    }
-
-    private function calculateMaxRepsPerRangeUpperBound(string $startTime, string $endTime, bool $endsNextDay): int
-    {
-        $durationMinutes = $this->calculateAvailabilityDurationMinutes($startTime, $endTime, $endsNextDay);
-        return max(1, (int) floor(($durationMinutes * 2) / 60));
-    }
-
-    private function calculateAvailabilityDurationMinutes(string $startTime, string $endTime, bool $endsNextDay): int
-    {
-        $anchorDate = Carbon::create(2026, 1, 4, 0, 0, 0);
-        [$startHour, $startMinute, $startSecond] = array_map('intval', explode(':', $startTime));
-        [$endHour, $endMinute, $endSecond] = array_map('intval', explode(':', $endTime));
-
-        $startAt = $anchorDate->copy()->setTime($startHour, $startMinute, $startSecond);
-        $endAt = $anchorDate->copy()->setTime($endHour, $endMinute, $endSecond);
-
-        if ($endsNextDay || $endAt->lessThanOrEqualTo($startAt)) {
-            $endAt->addDay();
-        }
-
-        return max(1, $startAt->diffInMinutes($endAt, false));
     }
 
     private function normalizeEndTimeBoundary(string $endTime): string
