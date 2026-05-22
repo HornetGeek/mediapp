@@ -16,6 +16,7 @@ class DoctorAvailability extends Model
         'end_time',
         'ends_next_day',
         'max_reps_per_range',
+        'visit_time_type',
         'status',
     ];
 

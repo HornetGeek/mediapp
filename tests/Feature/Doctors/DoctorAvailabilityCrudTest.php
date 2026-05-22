@@ -115,7 +115,7 @@ class DoctorAvailabilityCrudTest extends TestCase
         }
     }
 
-    public function test_save_available_time_accepts_max_reps_per_range_one_and_two(): void
+    public function test_save_available_time_accepts_mobile_controlled_max_reps_per_range(): void
     {
         $doctor = $this->createDoctor('doctor-save-max-reps-values@example.com', '01111111257');
         Sanctum::actingAs($doctor, ['doctor']);
@@ -132,7 +132,7 @@ class DoctorAvailabilityCrudTest extends TestCase
             'date' => 'tuesday',
             'start_time' => '09:00 AM',
             'end_time' => '10:00 AM',
-            'max_reps_per_range' => 2,
+            'max_reps_per_range' => 10,
         ]);
         $secondResponse->assertStatus(200);
 
@@ -150,7 +150,7 @@ class DoctorAvailabilityCrudTest extends TestCase
             'date' => 'tuesday',
             'start_time' => '09:00:00',
             'end_time' => '10:00:00',
-            'max_reps_per_range' => 2,
+            'max_reps_per_range' => 10,
             'status' => 'available',
         ]);
     }
@@ -167,14 +167,67 @@ class DoctorAvailabilityCrudTest extends TestCase
             'max_reps_per_range' => 0,
         ]);
         $zeroResponse->assertStatus(422);
+    }
 
-        $threeResponse = $this->putJson('/api/doctor/save-available-time', [
+    public function test_save_available_time_accepts_and_returns_visit_time_type_values(): void
+    {
+        $doctor = $this->createDoctor('doctor-save-visit-time-type@example.com', '01111111262');
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        foreach (['before', 'after', 'between'] as $index => $visitTimeType) {
+            $hour = 9 + $index;
+            $response = $this->putJson('/api/doctor/save-available-time', [
+                'date' => ['monday', 'tuesday', 'wednesday'][$index],
+                'start_time' => sprintf('%02d:00 AM', $hour),
+                'end_time' => sprintf('%02d:30 AM', $hour),
+                'visit_time_type' => $visitTimeType,
+            ]);
+
+            $response->assertStatus(200);
+            $response->assertJsonPath("data.available_times.{$index}.visit_time_type", $visitTimeType);
+
+            $this->assertDatabaseHas('doctor_availabilities', [
+                'doctors_id' => $doctor->id,
+                'visit_time_type' => $visitTimeType,
+            ]);
+        }
+    }
+
+    public function test_save_available_time_rejects_invalid_visit_time_type_values(): void
+    {
+        $doctor = $this->createDoctor('doctor-save-invalid-visit-time-type@example.com', '01111111263');
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        foreach (['during', '', 'random'] as $visitTimeType) {
+            $response = $this->putJson('/api/doctor/save-available-time', [
+                'date' => 'monday',
+                'start_time' => '09:00 AM',
+                'end_time' => '10:00 AM',
+                'visit_time_type' => $visitTimeType,
+            ]);
+
+            $response->assertStatus(422);
+        }
+    }
+
+    public function test_save_available_time_defaults_visit_time_type_to_between_when_omitted(): void
+    {
+        $doctor = $this->createDoctor('doctor-save-default-visit-time-type@example.com', '01111111264');
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $response = $this->putJson('/api/doctor/save-available-time', [
             'date' => 'monday',
-            'start_time' => '10:00 AM',
-            'end_time' => '11:00 AM',
-            'max_reps_per_range' => 3,
+            'start_time' => '09:00 AM',
+            'end_time' => '10:00 AM',
         ]);
-        $threeResponse->assertStatus(422);
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('data.available_times.0.visit_time_type', 'between');
+
+        $this->assertDatabaseHas('doctor_availabilities', [
+            'doctors_id' => $doctor->id,
+            'visit_time_type' => 'between',
+        ]);
     }
 
     public function test_save_available_time_defaults_max_reps_per_range_to_two_when_omitted(): void
@@ -201,48 +254,49 @@ class DoctorAvailabilityCrudTest extends TestCase
         ]);
     }
 
-    public function test_save_available_time_enforces_duration_based_upper_bound_for_max_reps_per_range(): void
+    public function test_save_available_time_does_not_enforce_duration_based_upper_bound_for_max_reps_per_range(): void
     {
         $doctor = $this->createDoctor('doctor-save-max-reps-duration-bound@example.com', '01111111261');
         Sanctum::actingAs($doctor, ['doctor']);
 
-        $validResponse = $this->putJson('/api/doctor/save-available-time', [
+        $response = $this->putJson('/api/doctor/save-available-time', [
             'date' => 'thursday',
             'start_time' => '09:00 AM',
-            'end_time' => '12:00 PM',
-            'max_reps_per_range' => 6,
+            'end_time' => '10:00 AM',
+            'max_reps_per_range' => 50,
         ]);
-        $validResponse->assertStatus(200);
-        $validResponse->assertJsonPath('data.available_times.0.max_reps_per_range', 6);
+        $response->assertStatus(200);
+        $response->assertJsonPath('data.available_times.0.max_reps_per_range', 50);
 
-        $invalidResponse = $this->putJson('/api/doctor/save-available-time', [
-            'date' => 'friday',
-            'start_time' => '09:00 AM',
-            'end_time' => '12:00 PM',
-            'max_reps_per_range' => 7,
+        $this->assertDatabaseHas('doctor_availabilities', [
+            'doctors_id' => $doctor->id,
+            'date' => 'thursday',
+            'start_time' => '09:00:00',
+            'end_time' => '10:00:00',
+            'max_reps_per_range' => 50,
         ]);
-        $invalidResponse->assertStatus(422);
-        $invalidResponse->assertJsonPath('message', 'max_reps_per_range must be between 1 and 6');
     }
 
-    public function test_update_available_time_updates_max_reps_per_range_and_defaults_to_computed_max_when_omitted(): void
+    public function test_update_available_time_updates_max_reps_per_range_and_keeps_visit_time_type_when_omitted(): void
     {
         $doctor = $this->createDoctor('doctor-update-max-reps@example.com', '01111111260');
-        $availability = $this->createAvailability($doctor, 'monday', '09:00:00', '10:00:00', 'available', false, 2);
+        $availability = $this->createAvailability($doctor, 'monday', '09:00:00', '10:00:00', 'available', false, 2, 'before');
         Sanctum::actingAs($doctor, ['doctor']);
 
         $updateWithOneResponse = $this->putJson('/api/doctor/available-time/' . $availability->id, [
             'date' => 'monday',
             'start_time' => '09:00 AM',
             'end_time' => '10:00 AM',
-            'max_reps_per_range' => 1,
+            'max_reps_per_range' => 25,
         ]);
         $updateWithOneResponse->assertStatus(200);
-        $updateWithOneResponse->assertJsonPath('data.max_reps_per_range', 1);
+        $updateWithOneResponse->assertJsonPath('data.max_reps_per_range', 25);
+        $updateWithOneResponse->assertJsonPath('data.visit_time_type', 'before');
 
         $this->assertDatabaseHas('doctor_availabilities', [
             'id' => $availability->id,
-            'max_reps_per_range' => 1,
+            'max_reps_per_range' => 25,
+            'visit_time_type' => 'before',
         ]);
 
         $updateWithoutFieldResponse = $this->putJson('/api/doctor/available-time/' . $availability->id, [
@@ -252,10 +306,34 @@ class DoctorAvailabilityCrudTest extends TestCase
         ]);
         $updateWithoutFieldResponse->assertStatus(200);
         $updateWithoutFieldResponse->assertJsonPath('data.max_reps_per_range', 2);
+        $updateWithoutFieldResponse->assertJsonPath('data.visit_time_type', 'before');
 
         $this->assertDatabaseHas('doctor_availabilities', [
             'id' => $availability->id,
             'max_reps_per_range' => 2,
+            'visit_time_type' => 'before',
+        ]);
+    }
+
+    public function test_update_available_time_updates_visit_time_type(): void
+    {
+        $doctor = $this->createDoctor('doctor-update-visit-time-type@example.com', '01111111265');
+        $availability = $this->createAvailability($doctor, 'monday', '09:00:00', '10:00:00', 'available', false, 2, 'before');
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $response = $this->putJson('/api/doctor/available-time/' . $availability->id, [
+            'date' => 'monday',
+            'start_time' => '09:00 AM',
+            'end_time' => '10:00 AM',
+            'visit_time_type' => 'after',
+        ]);
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('data.visit_time_type', 'after');
+
+        $this->assertDatabaseHas('doctor_availabilities', [
+            'id' => $availability->id,
+            'visit_time_type' => 'after',
         ]);
     }
 
@@ -293,7 +371,7 @@ class DoctorAvailabilityCrudTest extends TestCase
     public function test_representative_doctor_profile_endpoint_returns_only_available_times(): void
     {
         $doctor = $this->createDoctor('rep-doctor-profile-filter@example.com', '01111111235');
-        $this->createAvailability($doctor, 'monday', '09:00:00', '10:00:00', 'available');
+        $this->createAvailability($doctor, 'monday', '09:00:00', '10:00:00', 'available', false, 2, 'after');
         $this->createAvailability($doctor, 'tuesday', '10:00:00', '11:00:00', 'busy');
         $this->createAvailability($doctor, 'wednesday', '11:00:00', '12:00:00', 'booked');
         $this->createAvailability($doctor, 'thursday', '12:00:00', '13:00:00', 'canceled');
@@ -307,6 +385,7 @@ class DoctorAvailabilityCrudTest extends TestCase
         $response->assertJsonCount(1, 'data.available_times');
         $response->assertJsonPath('data.available_times.0.status', 'available');
         $response->assertJsonPath('data.available_times.0.date', 'Monday');
+        $response->assertJsonPath('data.available_times.0.visit_time_type', 'after');
     }
 
     public function test_times_booked_without_date_returns_today_and_future_active_bookings_only(): void
@@ -480,7 +559,7 @@ class DoctorAvailabilityCrudTest extends TestCase
     {
         $doctor = $this->createDoctor('rep-doctor-list-filter@example.com', '01111111236');
         $doctor->update(['name' => 'Doctor Visible Slot']);
-        $this->createAvailability($doctor, 'monday', '09:00:00', '10:00:00', 'available');
+        $this->createAvailability($doctor, 'monday', '09:00:00', '10:00:00', 'available', false, 2, 'before');
         $this->createAvailability($doctor, 'tuesday', '10:00:00', '11:00:00', 'busy');
         $this->createAvailability($doctor, 'wednesday', '11:00:00', '12:00:00', 'booked');
         $this->createAvailability($doctor, 'thursday', '12:00:00', '13:00:00', 'canceled');
@@ -499,6 +578,7 @@ class DoctorAvailabilityCrudTest extends TestCase
         $this->assertCount(1, $doctorPayload['available_times']);
         $this->assertSame('available', $doctorPayload['available_times'][0]['status']);
         $this->assertSame('Monday', $doctorPayload['available_times'][0]['date']);
+        $this->assertSame('before', $doctorPayload['available_times'][0]['visit_time_type']);
 
         $searchResponse = $this->getJson('/api/reps/doctors/search?name=Visible');
         $searchResponse->assertStatus(200);
@@ -508,6 +588,7 @@ class DoctorAvailabilityCrudTest extends TestCase
         $this->assertCount(1, $searchPayload['available_times']);
         $this->assertSame('available', $searchPayload['available_times'][0]['status']);
         $this->assertSame('Monday', $searchPayload['available_times'][0]['date']);
+        $this->assertSame('before', $searchPayload['available_times'][0]['visit_time_type']);
 
         $bySpecialityResponse = $this->getJson('/api/reps/doctorsBySpeciality?specialty_id=' . $doctor->specialty_id);
         $bySpecialityResponse->assertStatus(200);
@@ -517,6 +598,7 @@ class DoctorAvailabilityCrudTest extends TestCase
         $this->assertCount(1, $specialityPayload['available_times']);
         $this->assertSame('available', $specialityPayload['available_times'][0]['status']);
         $this->assertSame('Monday', $specialityPayload['available_times'][0]['date']);
+        $this->assertSame('before', $specialityPayload['available_times'][0]['visit_time_type']);
     }
 
     public function test_representative_doctors_all_supports_search_and_pagination(): void
@@ -1841,7 +1923,8 @@ class DoctorAvailabilityCrudTest extends TestCase
         string $end,
         string $status = 'available',
         bool $endsNextDay = false,
-        int $maxRepsPerRange = 2
+        int $maxRepsPerRange = 2,
+        string $visitTimeType = 'between'
     ): DoctorAvailability
     {
         return DoctorAvailability::create([
@@ -1851,6 +1934,7 @@ class DoctorAvailabilityCrudTest extends TestCase
             'end_time' => $end,
             'ends_next_day' => $endsNextDay,
             'max_reps_per_range' => $maxRepsPerRange,
+            'visit_time_type' => $visitTimeType,
             'status' => $status,
         ]);
     }
@@ -2022,6 +2106,7 @@ class DoctorAvailabilityCrudTest extends TestCase
             $table->time('end_time');
             $table->boolean('ends_next_day')->default(false);
             $table->unsignedInteger('max_reps_per_range')->default(2);
+            $table->enum('visit_time_type', ['before', 'after', 'between'])->nullable()->default('between');
             $table->enum('status', ['available', 'canceled', 'booked', 'busy'])->default('available');
             $table->timestamps();
         });

@@ -500,7 +500,7 @@ class RepsController extends Controller
         $availabilities = DoctorAvailability::query()
             ->where('doctors_id', $doctorId)
             ->where('status', 'available')
-            ->get(['id', 'date', 'start_time', 'end_time', 'ends_next_day', 'max_reps_per_range']);
+            ->get(['id', 'date', 'start_time', 'end_time', 'ends_next_day', 'max_reps_per_range', 'visit_time_type']);
 
         foreach ($availabilities as $availability) {
             $interval = $this->resolveAvailabilityOccurrenceInterval($availability, $slotStartAt, $slotEndAt);
