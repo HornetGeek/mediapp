@@ -77,7 +77,7 @@ class DoctorsController extends Controller
             [
                 'availableTimes' => function ($query) {
                     $query->where('status', 'available')
-                        ->select('id', 'doctors_id', 'date', 'start_time', 'end_time', 'ends_next_day', 'max_reps_per_range', 'status');
+                        ->select('id', 'doctors_id', 'date', 'start_time', 'end_time', 'ends_next_day', 'max_reps_per_range', 'visit_time_type', 'status');
                 }
             ]
         );
@@ -200,6 +200,7 @@ class DoctorsController extends Controller
             'end_time' => ['required', 'string'],
             'ends_next_day' => ['nullable', 'boolean'],
             'max_reps_per_range' => ['nullable', 'integer', 'min:1'],
+            'visit_time_type' => ['sometimes', 'required', 'string', 'in:before,after,between'],
         ]);
 
         if ($validator->fails()) {
@@ -217,22 +218,13 @@ class DoctorsController extends Controller
             return ApiResponse::sendResponse(422, $normalizedTimes['error'], []);
         }
 
-        $maxRepsPerRangeUpperBound = $this->calculateMaxRepsPerRangeUpperBound(
-            $normalizedTimes['start_time'],
-            $normalizedTimes['end_time'],
-            $normalizedTimes['ends_next_day']
-        );
         $requestedMaxRepsPerRange = isset($validated['max_reps_per_range'])
             ? (int) $validated['max_reps_per_range']
-            : $maxRepsPerRangeUpperBound;
-
-        if ($requestedMaxRepsPerRange > $maxRepsPerRangeUpperBound) {
-            return ApiResponse::sendResponse(
-                422,
-                'max_reps_per_range must be between 1 and ' . $maxRepsPerRangeUpperBound,
-                []
+            : $this->calculateMaxRepsPerRangeUpperBound(
+                $normalizedTimes['start_time'],
+                $normalizedTimes['end_time'],
+                $normalizedTimes['ends_next_day']
             );
-        }
 
         if ($this->hasAvailabilityOverlap(
             (int) $doctor->id,
@@ -250,6 +242,7 @@ class DoctorsController extends Controller
             'end_time' => $normalizedTimes['end_time'],
             'ends_next_day' => $normalizedTimes['ends_next_day'],
             'max_reps_per_range' => $requestedMaxRepsPerRange,
+            'visit_time_type' => $validated['visit_time_type'] ?? 'between',
             'status' => 'available',
         ]);
 
@@ -270,6 +263,7 @@ class DoctorsController extends Controller
             'end_time' => ['required', 'string'],
             'ends_next_day' => ['nullable', 'boolean'],
             'max_reps_per_range' => ['nullable', 'integer', 'min:1'],
+            'visit_time_type' => ['sometimes', 'required', 'string', 'in:before,after,between'],
         ]);
 
         if ($validator->fails()) {
@@ -297,22 +291,13 @@ class DoctorsController extends Controller
             return ApiResponse::sendResponse(422, $normalizedTimes['error'], []);
         }
 
-        $maxRepsPerRangeUpperBound = $this->calculateMaxRepsPerRangeUpperBound(
-            $normalizedTimes['start_time'],
-            $normalizedTimes['end_time'],
-            $normalizedTimes['ends_next_day']
-        );
         $requestedMaxRepsPerRange = isset($validated['max_reps_per_range'])
             ? (int) $validated['max_reps_per_range']
-            : $maxRepsPerRangeUpperBound;
-
-        if ($requestedMaxRepsPerRange > $maxRepsPerRangeUpperBound) {
-            return ApiResponse::sendResponse(
-                422,
-                'max_reps_per_range must be between 1 and ' . $maxRepsPerRangeUpperBound,
-                []
+            : $this->calculateMaxRepsPerRangeUpperBound(
+                $normalizedTimes['start_time'],
+                $normalizedTimes['end_time'],
+                $normalizedTimes['ends_next_day']
             );
-        }
 
         $existingAvailabilityWeekday = $this->normalizeStoredAvailabilityWeekday((string) $availability->date);
         if ($existingAvailabilityWeekday === null) {
@@ -353,6 +338,7 @@ class DoctorsController extends Controller
             'end_time' => $normalizedTimes['end_time'],
             'ends_next_day' => $normalizedTimes['ends_next_day'],
             'max_reps_per_range' => $requestedMaxRepsPerRange,
+            'visit_time_type' => $validated['visit_time_type'] ?? ($availability->visit_time_type ?: 'between'),
         ]);
 
         return ApiResponse::sendResponse(200, 'Availability updated successfully', new AppAvailableTimeResource($availability->fresh()));

@@ -26,6 +26,7 @@ class AppAvailableTimeResource extends JsonResource
             'end_time' => Carbon::parse($this->end_time)->format('h:i A'),
             'ends_next_day' => (bool) $this->ends_next_day,
             'max_reps_per_range' => max(1, (int) ($this->max_reps_per_range ?? 1)),
+            'visit_time_type' => $this->visit_time_type ?: 'between',
             'status' => $this->status,
             'is_booked_for_date' => (bool) ($this->is_booked_for_date ?? false),
         ];
