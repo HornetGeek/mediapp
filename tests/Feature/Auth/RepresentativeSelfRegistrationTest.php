@@ -659,6 +659,7 @@ class RepresentativeSelfRegistrationTest extends TestCase
             $table->unsignedBigInteger('representative_id');
             $table->unsignedBigInteger('company_id')->nullable();
             $table->unsignedBigInteger('company_catalog_id')->nullable();
+            $table->unsignedBigInteger('doctor_availability_id')->nullable();
             $table->date('date')->nullable();
             $table->time('start_time');
             $table->time('end_time');

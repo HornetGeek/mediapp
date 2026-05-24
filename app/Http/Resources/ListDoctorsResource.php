@@ -33,7 +33,7 @@ class ListDoctorsResource extends JsonResource
                         );
                     })
                     ->values()
-            ),
+            )->resolve($request),
         ];
     }
 

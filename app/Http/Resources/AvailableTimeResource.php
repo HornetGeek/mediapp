@@ -16,6 +16,13 @@ class AvailableTimeResource extends JsonResource
     public function toArray(Request $request): array
     {
         $normalizedDate = $this->normalizeWeekdayDate((string) $this->date);
+        $maxRepsPerRange = $this->max_reps_per_range === null
+            ? null
+            : max(1, (int) $this->max_reps_per_range);
+        $bookedRepsCount = (int) ($this->booked_reps_count ?? 0);
+        $remainingRepsCount = $maxRepsPerRange === null
+            ? null
+            : max(0, (int) ($this->remaining_reps_count ?? ($maxRepsPerRange - $bookedRepsCount)));
 
         return [
             'id' => $this->id,
@@ -23,9 +30,9 @@ class AvailableTimeResource extends JsonResource
             'start_time' => Carbon::parse($this->start_time)->format('h:i A'), // 12h format
             'end_time' => Carbon::parse($this->end_time)->format('h:i A'),
             'ends_next_day' => (bool) $this->ends_next_day,
-            'max_reps_per_range' => $this->max_reps_per_range === null
-                ? null
-                : max(1, (int) $this->max_reps_per_range),
+            'max_reps_per_range' => $maxRepsPerRange,
+            'booked_reps_count' => $bookedRepsCount,
+            'remaining_reps_count' => $remainingRepsCount,
             'visit_time_type' => $this->visit_time_type ?: 'between',
             'status' => $this->status,
         ];

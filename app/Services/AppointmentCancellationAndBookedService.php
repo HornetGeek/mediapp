@@ -142,8 +142,20 @@ class AppointmentCancellationAndBookedService
         try {
             $datePart = Carbon::parse($dateValue, 'Africa/Cairo')->format('Y-m-d');
             $timePart = Carbon::parse($timeValue, 'Africa/Cairo')->format('H:i:s');
+            $dateTime = Carbon::createFromFormat('Y-m-d H:i:s', $datePart . ' ' . $timePart, 'Africa/Cairo');
 
-            return Carbon::createFromFormat('Y-m-d H:i:s', $datePart . ' ' . $timePart, 'Africa/Cairo');
+            if ($timeColumn === 'end_time') {
+                $startTimeValue = trim((string) $appointment->getRawOriginal('start_time'));
+                if ($startTimeValue !== '') {
+                    $startTimePart = Carbon::parse($startTimeValue, 'Africa/Cairo')->format('H:i:s');
+                    $startAt = Carbon::createFromFormat('Y-m-d H:i:s', $datePart . ' ' . $startTimePart, 'Africa/Cairo');
+                    if ($dateTime->lessThanOrEqualTo($startAt)) {
+                        $dateTime->addDay();
+                    }
+                }
+            }
+
+            return $dateTime;
         } catch (\Throwable $exception) {
             return null;
         }

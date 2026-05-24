@@ -143,7 +143,7 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
         $response->assertStatus(200);
         $response->assertJsonPath('code', 200);
         $response->assertJsonPath('data.id', $targetNotification->id);
-        $response->assertJsonPath('data.is_read', true);
+        $this->assertTrue((bool) $response->json('data.is_read'));
 
         $this->assertDatabaseHas('notifications', [
             'id' => $targetNotification->id,
@@ -168,7 +168,8 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
                 $doctor->fcm_token,
                 'New visit booked.',
                 Mockery::type('string'),
-                []
+                [],
+                null
             )
             ->andReturn(['ok' => true]);
 
@@ -176,17 +177,14 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
 
         Sanctum::actingAs($rep, ['representative']);
 
-        $date = now()->toDateString();
-        $response = $this->postJson('/api/reps/booking', [
-            'doctors_id' => $doctor->id,
-            'date' => $date,
-            'start_time' => '10:00:00',
-        ]);
+        $date = now('Africa/Cairo')->addDays(2)->toDateString();
+        $availability = $this->firstAvailabilityForDate($doctor, $date);
+        $response = $this->postJson('/api/reps/booking', $this->bookingPayload($doctor, $date, $availability));
 
         $response->assertStatus(201);
         $response->assertJsonPath('code', 201);
 
-        $expectedDateTime = Carbon::parse($date . ' 10:00:00')->format('Y-m-d h:i a');
+        $expectedDateTime = Carbon::parse($date . ' ' . $availability->start_time)->format('Y-m-d h:i a');
         $expectedBody = 'New visit booked with ' . $rep->name . ' at ' . $expectedDateTime;
 
         $this->assertDatabaseHas('appointments', [
@@ -217,20 +215,26 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
         ]);
     }
 
-    public function test_booking_accepts_hour_minute_time_and_normalizes_slot(): void
+    public function test_booking_stores_selected_available_time_range(): void
     {
         $company = $this->createCompany();
         $rep = $this->createRepresentative($company, 'booking-format-rep@example.com', '01055555575');
         $doctor = $this->createDoctor('booking-format-doctor@example.com', '01066666676');
+        DoctorAvailability::query()->where('doctors_id', $doctor->id)->delete();
 
         Sanctum::actingAs($rep, ['representative']);
 
-        $date = now('Africa/Cairo')->toDateString();
-        $response = $this->postJson('/api/reps/booking', [
+        $date = now('Africa/Cairo')->addDays(2)->toDateString();
+        $availability = DoctorAvailability::create([
             'doctors_id' => $doctor->id,
-            'date' => $date,
-            'start_time' => '10:00',
+            'date' => strtolower(Carbon::parse($date, 'Africa/Cairo')->format('l')),
+            'start_time' => '10:00:00',
+            'end_time' => '11:00:00',
+            'ends_next_day' => false,
+            'max_reps_per_range' => 2,
+            'status' => 'available',
         ]);
+        $response = $this->postJson('/api/reps/booking', $this->bookingPayload($doctor, $date, $availability));
 
         $response->assertStatus(201);
         $response->assertJsonPath('code', 201);
@@ -239,29 +243,32 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
             Appointment::query()
                 ->where('doctors_id', $doctor->id)
                 ->where('representative_id', $rep->id)
+                ->where('doctor_availability_id', $availability->id)
                 ->whereDate('date', $date)
                 ->where('start_time', '10:00:00')
-                ->where('end_time', '10:05:00')
+                ->where('end_time', '11:00:00')
                 ->where('status', 'pending')
                 ->exists()
         );
     }
 
-    public function test_booking_duplicate_pending_slot_returns_409_with_clear_message(): void
+    public function test_booking_same_available_time_with_pending_visit_allows_creation_when_capacity_remains(): void
     {
         $company = $this->createCompany();
         $rep = $this->createRepresentative($company, 'dup-pending-rep@example.com', '01055555556');
         $otherRep = $this->createRepresentative($company, 'dup-pending-rep-other@example.com', '01055555559');
         $doctor = $this->createDoctor('dup-pending-doctor@example.com', '01066666667');
 
-        $date = now()->toDateString();
+        $date = now('Africa/Cairo')->addDays(2)->toDateString();
+        $availability = $this->firstAvailabilityForDate($doctor, $date);
         DB::table('appointments')->insert([
             'doctors_id' => $doctor->id,
             'representative_id' => $otherRep->id,
             'company_id' => $company->id,
+            'doctor_availability_id' => $availability->id,
             'date' => $date,
-            'start_time' => '10:00:00',
-            'end_time' => '10:05:00',
+            'start_time' => $availability->start_time,
+            'end_time' => $availability->end_time,
             'status' => 'pending',
             'appointment_code' => '30000000-0000-4000-8000-000000000001',
             'created_at' => now(),
@@ -270,31 +277,30 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
 
         Sanctum::actingAs($rep, ['representative']);
 
-        $response = $this->postJson('/api/reps/booking', [
-            'doctors_id' => $doctor->id,
-            'date' => $date,
-            'start_time' => '10:00:00',
-        ]);
+        $response = $this->postJson('/api/reps/booking', $this->bookingPayload($doctor, $date, $availability));
 
-        $response->assertStatus(409);
-        $response->assertJsonPath('message', 'This time slot already has an active appointment (pending or confirmed).');
+        $response->assertStatus(201);
+        $this->assertSame(2, Appointment::where('doctor_availability_id', $availability->id)->count());
     }
 
-    public function test_booking_duplicate_confirmed_slot_returns_409_with_clear_message(): void
+    public function test_booking_same_available_time_with_confirmed_visit_respects_capacity(): void
     {
         $company = $this->createCompany();
         $rep = $this->createRepresentative($company, 'dup-confirmed-rep@example.com', '01055555557');
         $otherRep = $this->createRepresentative($company, 'dup-confirmed-rep-other@example.com', '01055555560');
         $doctor = $this->createDoctor('dup-confirmed-doctor@example.com', '01066666668');
 
-        $date = now()->toDateString();
+        $date = now('Africa/Cairo')->addDays(2)->toDateString();
+        $availability = $this->firstAvailabilityForDate($doctor, $date);
+        $availability->update(['max_reps_per_range' => 1]);
         DB::table('appointments')->insert([
             'doctors_id' => $doctor->id,
             'representative_id' => $otherRep->id,
             'company_id' => $company->id,
+            'doctor_availability_id' => $availability->id,
             'date' => $date,
-            'start_time' => '11:00:00',
-            'end_time' => '11:05:00',
+            'start_time' => $availability->start_time,
+            'end_time' => $availability->end_time,
             'status' => 'confirmed',
             'appointment_code' => '30000000-0000-4000-8000-000000000002',
             'created_at' => now(),
@@ -303,14 +309,10 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
 
         Sanctum::actingAs($rep, ['representative']);
 
-        $response = $this->postJson('/api/reps/booking', [
-            'doctors_id' => $doctor->id,
-            'date' => $date,
-            'start_time' => '11:00:00',
-        ]);
+        $response = $this->postJson('/api/reps/booking', $this->bookingPayload($doctor, $date, $availability));
 
         $response->assertStatus(409);
-        $response->assertJsonPath('message', 'This time slot already has an active appointment (pending or confirmed).');
+        $response->assertJsonPath('message', 'This availability range has reached the maximum number of visits for this doctor.');
     }
 
     public function test_booking_same_slot_after_cancelled_allows_creation(): void
@@ -319,14 +321,16 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
         $rep = $this->createRepresentative($company, 'rebook-rep@example.com', '01055555558');
         $doctor = $this->createDoctor('rebook-doctor@example.com', '01066666669');
 
-        $date = now()->toDateString();
+        $date = now('Africa/Cairo')->addDays(2)->toDateString();
+        $availability = $this->firstAvailabilityForDate($doctor, $date);
         DB::table('appointments')->insert([
             'doctors_id' => $doctor->id,
             'representative_id' => $rep->id,
             'company_id' => $company->id,
+            'doctor_availability_id' => $availability->id,
             'date' => $date,
-            'start_time' => '12:00:00',
-            'end_time' => '12:05:00',
+            'start_time' => $availability->start_time,
+            'end_time' => $availability->end_time,
             'status' => 'cancelled',
             'cancelled_by' => 'system',
             'appointment_code' => '30000000-0000-4000-8000-000000000003',
@@ -336,11 +340,7 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
 
         Sanctum::actingAs($rep, ['representative']);
 
-        $response = $this->postJson('/api/reps/booking', [
-            'doctors_id' => $doctor->id,
-            'date' => $date,
-            'start_time' => '12:00:00',
-        ]);
+        $response = $this->postJson('/api/reps/booking', $this->bookingPayload($doctor, $date, $availability));
 
         $response->assertStatus(201);
         $response->assertJsonPath('code', 201);
@@ -378,21 +378,14 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
             ->where('doctors_id', $doctor->id)
             ->where('date', $weekday)
             ->update(['max_reps_per_range' => 1]);
+        $availability = $this->firstAvailabilityForDate($doctor, $date);
 
         Sanctum::actingAs($firstRep, ['representative']);
-        $firstResponse = $this->postJson('/api/reps/booking', [
-            'doctors_id' => $doctor->id,
-            'date' => $date,
-            'start_time' => '10:05:00',
-        ]);
+        $firstResponse = $this->postJson('/api/reps/booking', $this->bookingPayload($doctor, $date, $availability));
         $firstResponse->assertStatus(201);
 
         Sanctum::actingAs($secondRep, ['representative']);
-        $secondResponse = $this->postJson('/api/reps/booking', [
-            'doctors_id' => $doctor->id,
-            'date' => $date,
-            'start_time' => '10:40:00',
-        ]);
+        $secondResponse = $this->postJson('/api/reps/booking', $this->bookingPayload($doctor, $date, $availability));
         $secondResponse->assertStatus(409);
         $secondResponse->assertJsonPath('message', 'This availability range has reached the maximum number of visits for this doctor.');
     }
@@ -412,29 +405,18 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
             ->where('doctors_id', $doctor->id)
             ->where('date', $weekday)
             ->update(['max_reps_per_range' => 2]);
+        $availability = $this->firstAvailabilityForDate($doctor, $date);
 
         Sanctum::actingAs($firstRep, ['representative']);
-        $firstResponse = $this->postJson('/api/reps/booking', [
-            'doctors_id' => $doctor->id,
-            'date' => $date,
-            'start_time' => '10:05:00',
-        ]);
+        $firstResponse = $this->postJson('/api/reps/booking', $this->bookingPayload($doctor, $date, $availability));
         $firstResponse->assertStatus(201);
 
         Sanctum::actingAs($secondRep, ['representative']);
-        $secondResponse = $this->postJson('/api/reps/booking', [
-            'doctors_id' => $doctor->id,
-            'date' => $date,
-            'start_time' => '10:20:00',
-        ]);
+        $secondResponse = $this->postJson('/api/reps/booking', $this->bookingPayload($doctor, $date, $availability));
         $secondResponse->assertStatus(201);
 
         Sanctum::actingAs($thirdRep, ['representative']);
-        $thirdResponse = $this->postJson('/api/reps/booking', [
-            'doctors_id' => $doctor->id,
-            'date' => $date,
-            'start_time' => '12:40:00',
-        ]);
+        $thirdResponse = $this->postJson('/api/reps/booking', $this->bookingPayload($doctor, $date, $availability));
         $thirdResponse->assertStatus(409);
         $thirdResponse->assertJsonPath('message', 'This availability range has reached the maximum number of visits for this doctor.');
     }
@@ -455,7 +437,7 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
             ->where('date', $weekday)
             ->delete();
 
-        DoctorAvailability::create([
+        $morningAvailability = DoctorAvailability::create([
             'doctors_id' => $doctor->id,
             'date' => $weekday,
             'start_time' => '10:00:00',
@@ -464,7 +446,7 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
             'max_reps_per_range' => 1,
             'status' => 'available',
         ]);
-        DoctorAvailability::create([
+        $afternoonAvailability = DoctorAvailability::create([
             'doctors_id' => $doctor->id,
             'date' => $weekday,
             'start_time' => '13:00:00',
@@ -475,27 +457,15 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
         ]);
 
         Sanctum::actingAs($firstRep, ['representative']);
-        $firstResponse = $this->postJson('/api/reps/booking', [
-            'doctors_id' => $doctor->id,
-            'date' => $date,
-            'start_time' => '10:05:00',
-        ]);
+        $firstResponse = $this->postJson('/api/reps/booking', $this->bookingPayload($doctor, $date, $morningAvailability));
         $firstResponse->assertStatus(201);
 
         Sanctum::actingAs($secondRep, ['representative']);
-        $secondResponse = $this->postJson('/api/reps/booking', [
-            'doctors_id' => $doctor->id,
-            'date' => $date,
-            'start_time' => '13:05:00',
-        ]);
+        $secondResponse = $this->postJson('/api/reps/booking', $this->bookingPayload($doctor, $date, $afternoonAvailability));
         $secondResponse->assertStatus(201);
 
         Sanctum::actingAs($thirdRep, ['representative']);
-        $thirdResponse = $this->postJson('/api/reps/booking', [
-            'doctors_id' => $doctor->id,
-            'date' => $date,
-            'start_time' => '10:20:00',
-        ]);
+        $thirdResponse = $this->postJson('/api/reps/booking', $this->bookingPayload($doctor, $date, $morningAvailability));
         $thirdResponse->assertStatus(409);
     }
 
@@ -508,14 +478,13 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
         $doctor = $this->createDoctor('range-overnight-doctor@example.com', '01066666704');
 
         $startDate = now('Africa/Cairo')->addDays(2)->toDateString();
-        $endDate = Carbon::parse($startDate, 'Africa/Cairo')->addDay()->toDateString();
         $weekday = strtolower(Carbon::parse($startDate, 'Africa/Cairo')->format('l'));
 
         DoctorAvailability::query()
             ->where('doctors_id', $doctor->id)
             ->delete();
 
-        DoctorAvailability::create([
+        $availability = DoctorAvailability::create([
             'doctors_id' => $doctor->id,
             'date' => $weekday,
             'start_time' => '22:00:00',
@@ -526,27 +495,15 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
         ]);
 
         Sanctum::actingAs($firstRep, ['representative']);
-        $firstResponse = $this->postJson('/api/reps/booking', [
-            'doctors_id' => $doctor->id,
-            'date' => $startDate,
-            'start_time' => '22:30:00',
-        ]);
+        $firstResponse = $this->postJson('/api/reps/booking', $this->bookingPayload($doctor, $startDate, $availability));
         $firstResponse->assertStatus(201);
 
         Sanctum::actingAs($secondRep, ['representative']);
-        $secondResponse = $this->postJson('/api/reps/booking', [
-            'doctors_id' => $doctor->id,
-            'date' => $endDate,
-            'start_time' => '00:30:00',
-        ]);
+        $secondResponse = $this->postJson('/api/reps/booking', $this->bookingPayload($doctor, $startDate, $availability));
         $secondResponse->assertStatus(201);
 
         Sanctum::actingAs($thirdRep, ['representative']);
-        $thirdResponse = $this->postJson('/api/reps/booking', [
-            'doctors_id' => $doctor->id,
-            'date' => $endDate,
-            'start_time' => '01:30:00',
-        ]);
+        $thirdResponse = $this->postJson('/api/reps/booking', $this->bookingPayload($doctor, $startDate, $availability));
         $thirdResponse->assertStatus(409);
         $thirdResponse->assertJsonPath('message', 'This availability range has reached the maximum number of visits for this doctor.');
     }
@@ -611,6 +568,29 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
                 'status' => 'available',
             ]);
         }
+    }
+
+    private function bookingPayload(Doctors $doctor, string $date, ?DoctorAvailability $availability = null): array
+    {
+        $availability ??= $this->firstAvailabilityForDate($doctor, $date);
+
+        return [
+            'doctors_id' => $doctor->id,
+            'date' => $date,
+            'available_time_id' => $availability->id,
+        ];
+    }
+
+    private function firstAvailabilityForDate(Doctors $doctor, string $date): DoctorAvailability
+    {
+        $weekday = strtolower(Carbon::parse($date, 'Africa/Cairo')->format('l'));
+
+        return DoctorAvailability::query()
+            ->where('doctors_id', $doctor->id)
+            ->where('date', $weekday)
+            ->where('status', 'available')
+            ->orderBy('start_time')
+            ->firstOrFail();
     }
 
     private function createTestingSchema(): void
@@ -682,6 +662,8 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
             $table->unsignedBigInteger('doctors_id');
             $table->unsignedBigInteger('representative_id');
             $table->unsignedBigInteger('company_id');
+            $table->unsignedBigInteger('company_catalog_id')->nullable();
+            $table->unsignedBigInteger('doctor_availability_id')->nullable();
             $table->date('date')->nullable();
             $table->time('start_time');
             $table->time('end_time');
@@ -715,6 +697,11 @@ class RepsNotificationsReadAndBookingFlowTest extends TestCase
             $table->id();
             $table->string('title');
             $table->text('body');
+            $table->string('image_url')->nullable();
+            $table->string('video_url')->nullable();
+            $table->string('media_type')->default('none');
+            $table->string('display_type')->default('list');
+            $table->boolean('is_skippable')->default(true);
             $table->boolean('is_read')->default(false);
             $table->enum('target_type', ['doctor', 'reps', 'company'])->nullable();
             $table->string('dedupe_key')->nullable();

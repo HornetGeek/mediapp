@@ -29,4 +29,9 @@ class DoctorAvailability extends Model
     {
         return $this->belongsTo(Doctors::class, 'doctors_id');
     }
+
+    public function appointments()
+    {
+        return $this->hasMany(Appointment::class, 'doctor_availability_id');
+    }
 }

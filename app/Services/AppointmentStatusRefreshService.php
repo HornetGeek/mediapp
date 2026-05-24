@@ -28,7 +28,7 @@ class AppointmentStatusRefreshService
 
         $pendingAppointments = (clone $scope)
             ->where('status', 'pending')
-            ->get(['id', 'date', 'end_time']);
+            ->get(['id', 'date', 'start_time', 'end_time']);
 
         $suspendedAppointments = (clone $scope)
             ->where('status', 'suspended')
@@ -87,8 +87,20 @@ class AppointmentStatusRefreshService
         try {
             $datePart = Carbon::parse($dateValue, self::TIMEZONE)->format('Y-m-d');
             $timePart = Carbon::parse($timeValue, self::TIMEZONE)->format('H:i:s');
+            $dateTime = Carbon::createFromFormat('Y-m-d H:i:s', $datePart . ' ' . $timePart, self::TIMEZONE);
 
-            return Carbon::createFromFormat('Y-m-d H:i:s', $datePart . ' ' . $timePart, self::TIMEZONE);
+            if ($timeColumn === 'end_time') {
+                $startTimeValue = trim((string) $appointment->getRawOriginal('start_time'));
+                if ($startTimeValue !== '') {
+                    $startTimePart = Carbon::parse($startTimeValue, self::TIMEZONE)->format('H:i:s');
+                    $startAt = Carbon::createFromFormat('Y-m-d H:i:s', $datePart . ' ' . $startTimePart, self::TIMEZONE);
+                    if ($dateTime->lessThanOrEqualTo($startAt)) {
+                        $dateTime->addDay();
+                    }
+                }
+            }
+
+            return $dateTime;
         } catch (\Throwable $exception) {
             return null;
         }
