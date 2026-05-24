@@ -755,6 +755,7 @@ class SubscriptionFlowsTest extends TestCase
             $table->unsignedBigInteger('doctors_id');
             $table->unsignedBigInteger('representative_id');
             $table->unsignedBigInteger('company_id');
+            $table->unsignedBigInteger('doctor_availability_id')->nullable();
             $table->date('date')->nullable();
             $table->time('start_time');
             $table->time('end_time');

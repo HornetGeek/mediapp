@@ -17,6 +17,7 @@ class AppointmentsResource extends JsonResource
     {
         return [
             'id' => $this->id,
+            'available_time_id' => $this->doctor_availability_id,
             'doctor' => [
                 'id' => $this->doctor->id,
                 'name' => $this->doctor->name,

@@ -15,6 +15,7 @@ class Appointment extends Model
         'representative_id',
         'company_id',
         'company_catalog_id',
+        'doctor_availability_id',
         'date',
         'start_time',
         'end_time',
@@ -42,6 +43,11 @@ class Appointment extends Model
     public function doctor()
     {
         return $this->belongsTo(Doctors::class, 'doctors_id');
+    }
+
+    public function availability()
+    {
+        return $this->belongsTo(DoctorAvailability::class, 'doctor_availability_id');
     }
 
     public function representative()
