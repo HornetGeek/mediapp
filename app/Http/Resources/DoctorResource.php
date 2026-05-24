@@ -27,13 +27,17 @@ class DoctorResource extends JsonResource
         $targetDateObject = Carbon::createFromFormat(self::DATE_FORMAT, $targetDate, self::TIMEZONE)->startOfDay();
         $activeStatuses = ['pending', 'confirmed'];
 
-        $candidateAppointments = Appointment::query()
+        $bookedCountsByAvailabilityId = Appointment::query()
             ->where('doctors_id', $this->id)
+            ->whereNotNull('doctor_availability_id')
             ->whereIn('status', $activeStatuses)
             ->whereDate('date', $targetDate)
-            ->orderBy('date')
-            ->orderBy('start_time')
-            ->get(['doctor_availability_id', 'date']);
+            ->selectRaw('doctor_availability_id, COUNT(*) as booked_reps_count')
+            ->groupBy('doctor_availability_id')
+            ->pluck('booked_reps_count', 'doctor_availability_id')
+            ->mapWithKeys(function ($count, $availabilityId) {
+                return [(int) $availabilityId => (int) $count];
+            });
 
         $availableTimes = $this->relationLoaded('availableTimes')
             ? $this->availableTimes
@@ -49,11 +53,11 @@ class DoctorResource extends JsonResource
                     (int) $availability->id
                 );
             })
-            ->map(function ($availability) use ($targetDateObject, $candidateAppointments) {
+            ->map(function ($availability) use ($targetDateObject, $bookedCountsByAvailabilityId) {
                 $bookedRepsCount = $this->countBookedRepsForAvailabilityDate(
                     $availability,
                     $targetDateObject,
-                    $candidateAppointments
+                    $bookedCountsByAvailabilityId
                 );
                 $maxRepsPerRange = $availability->max_reps_per_range === null
                     ? null
@@ -171,15 +175,13 @@ class DoctorResource extends JsonResource
         return Carbon::now(self::TIMEZONE)->toDateString();
     }
 
-    private function countBookedRepsForAvailabilityDate($availability, Carbon $targetDate, $candidateAppointments): int
+    private function countBookedRepsForAvailabilityDate($availability, Carbon $targetDate, $bookedCountsByAvailabilityId): int
     {
         if (!$this->availabilityMatchesTargetDate((string) $availability->date, $targetDate)) {
             return 0;
         }
 
-        return $candidateAppointments
-            ->where('doctor_availability_id', (int) $availability->id)
-            ->count();
+        return (int) ($bookedCountsByAvailabilityId[(int) $availability->id] ?? 0);
     }
 
     private function availabilityMatchesTargetDate(string $availabilityDate, Carbon $targetDate): bool
