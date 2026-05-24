@@ -24,7 +24,7 @@ class AppAvailableTimeResource extends JsonResource
             ? null
             : max(0, (int) ($this->remaining_reps_count ?? ($maxRepsPerRange - $bookedRepsCount)));
 
-        return [
+        $payload = [
             'id' => $this->id,
             'date' => $normalizedDate !== null
                 ? ucfirst($normalizedDate)
@@ -39,6 +39,13 @@ class AppAvailableTimeResource extends JsonResource
             'status' => $this->status,
             'is_booked_for_date' => (bool) ($this->is_booked_for_date ?? false),
         ];
+
+        $countedForDate = $this->counted_for_date ?? null;
+        if ($countedForDate !== null && $countedForDate !== '') {
+            $payload['counted_for_date'] = (string) $countedForDate;
+        }
+
+        return $payload;
     }
 
     private function normalizeWeekdayDate(string $date): ?string
