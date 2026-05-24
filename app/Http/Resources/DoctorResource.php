@@ -3,6 +3,7 @@
 namespace App\Http\Resources;
 
 use App\Models\Appointment;
+use App\Services\AvailabilityOccurrenceService;
 use App\Services\DoctorBusyStatusService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -22,22 +23,36 @@ class DoctorResource extends JsonResource
     {
         /** @var DoctorBusyStatusService $doctorBusyStatus */
         $doctorBusyStatus = app(DoctorBusyStatusService::class);
+        /** @var AvailabilityOccurrenceService $occurrenceService */
+        $occurrenceService = app(AvailabilityOccurrenceService::class);
         $busyPeriod = $doctorBusyStatus->buildBusyPeriodPayload($this->resource);
-        $targetDate = $this->resolveTargetDate($request);
-        $targetDateObject = Carbon::createFromFormat(self::DATE_FORMAT, $targetDate, self::TIMEZONE)->startOfDay();
-        $activeStatuses = ['pending', 'confirmed'];
+        $explicitDate = $occurrenceService->parseExplicitRequestDate($request);
+        $hasExplicitDate = $explicitDate !== null;
+        $nowInCairo = Carbon::now(self::TIMEZONE);
 
-        $bookedCountsByAvailabilityId = Appointment::query()
-            ->where('doctors_id', $this->id)
-            ->whereNotNull('doctor_availability_id')
-            ->whereIn('status', $activeStatuses)
-            ->whereDate('date', $targetDate)
-            ->selectRaw('doctor_availability_id, COUNT(*) as booked_reps_count')
-            ->groupBy('doctor_availability_id')
-            ->pluck('booked_reps_count', 'doctor_availability_id')
-            ->mapWithKeys(function ($count, $availabilityId) {
-                return [(int) $availabilityId => (int) $count];
-            });
+        $bookedCountsByAvailabilityIdForExplicitDate = [];
+        $bookedCountsByAvailabilityAndDate = [];
+
+        if ($hasExplicitDate) {
+            $bookedCountsByAvailabilityIdForExplicitDate = Appointment::query()
+                ->where('doctors_id', $this->id)
+                ->whereNotNull('doctor_availability_id')
+                ->whereIn('status', ['pending', 'confirmed'])
+                ->whereDate('date', $explicitDate)
+                ->selectRaw('doctor_availability_id, COUNT(*) as booked_reps_count')
+                ->groupBy('doctor_availability_id')
+                ->pluck('booked_reps_count', 'doctor_availability_id')
+                ->mapWithKeys(function ($count, $availabilityId) {
+                    return [(int) $availabilityId => (int) $count];
+                })
+                ->all();
+        } else {
+            $bookedCountsByAvailabilityAndDate = $occurrenceService->loadBookedCountsByAvailabilityAndDate(
+                (int) $this->id,
+                $nowInCairo->toDateString(),
+                $occurrenceService->bookingCountHorizonEnd($nowInCairo)
+            );
+        }
 
         $availableTimes = $this->relationLoaded('availableTimes')
             ? $this->availableTimes
@@ -53,12 +68,33 @@ class DoctorResource extends JsonResource
                     (int) $availability->id
                 );
             })
-            ->map(function ($availability) use ($targetDateObject, $bookedCountsByAvailabilityId) {
-                $bookedRepsCount = $this->countBookedRepsForAvailabilityDate(
-                    $availability,
-                    $targetDateObject,
-                    $bookedCountsByAvailabilityId
-                );
+            ->map(function ($availability) use (
+                $hasExplicitDate,
+                $explicitDate,
+                $occurrenceService,
+                $nowInCairo,
+                $bookedCountsByAvailabilityIdForExplicitDate,
+                $bookedCountsByAvailabilityAndDate
+            ) {
+                if ($hasExplicitDate) {
+                    $countedForDate = $explicitDate;
+                    $targetDateObject = Carbon::createFromFormat(self::DATE_FORMAT, $explicitDate, self::TIMEZONE)->startOfDay();
+                    $bookedRepsCount = $this->countBookedRepsForExplicitDate(
+                        $availability,
+                        $targetDateObject,
+                        $bookedCountsByAvailabilityIdForExplicitDate,
+                        $occurrenceService
+                    );
+                } else {
+                    $countedForDate = $occurrenceService->resolveNextOccurrenceDate($availability, $nowInCairo);
+                    $bookedRepsCount = 0;
+                    if ($countedForDate !== null) {
+                        $bookedRepsCount = (int) (
+                            $bookedCountsByAvailabilityAndDate[(int) $availability->id][$countedForDate] ?? 0
+                        );
+                    }
+                }
+
                 $maxRepsPerRange = $availability->max_reps_per_range === null
                     ? null
                     : max(1, (int) $availability->max_reps_per_range);
@@ -68,9 +104,12 @@ class DoctorResource extends JsonResource
 
                 $availability->setAttribute('booked_reps_count', $bookedRepsCount);
                 $availability->setAttribute('remaining_reps_count', $remainingRepsCount);
+                $availability->setAttribute('counted_for_date', $countedForDate);
                 $availability->setAttribute(
                     'is_booked_for_date',
-                    $maxRepsPerRange !== null && $bookedRepsCount >= $maxRepsPerRange
+                    $countedForDate !== null
+                        && $maxRepsPerRange !== null
+                        && $bookedRepsCount >= $maxRepsPerRange
                 );
 
                 return $availability;
@@ -84,7 +123,7 @@ class DoctorResource extends JsonResource
             'phone' => $this->phone,
             'specialty' => $this->specialty->name ?? 'N/A',
             'address_1' => $this->address_1,
-            'booked_for_date' => $targetDate,
+            'booked_for_date' => $hasExplicitDate ? $explicitDate : null,
             'available_times' => AppAvailableTimeResource::collection($availableTimes),
             'is_fav' => $this->favoredByReps->isNotEmpty() ? (bool) $this->favoredByReps->first()->pivot->is_fav : false,
             'status' => $this->status,
@@ -157,55 +196,16 @@ class DoctorResource extends JsonResource
         }
     }
 
-    private function resolveTargetDate(Request $request): string
-    {
-        $dateInput = trim((string) $request->query('date'));
-
-        if ($dateInput !== '') {
-            try {
-                $parsedDate = Carbon::createFromFormat(self::DATE_FORMAT, $dateInput, self::TIMEZONE);
-                if ($parsedDate->format(self::DATE_FORMAT) === $dateInput) {
-                    return $parsedDate->format(self::DATE_FORMAT);
-                }
-            } catch (\Throwable $exception) {
-                // Controller validation should reject invalid values; keep a safe fallback.
-            }
-        }
-
-        return Carbon::now(self::TIMEZONE)->toDateString();
-    }
-
-    private function countBookedRepsForAvailabilityDate($availability, Carbon $targetDate, $bookedCountsByAvailabilityId): int
-    {
-        if (!$this->availabilityMatchesTargetDate((string) $availability->date, $targetDate)) {
+    private function countBookedRepsForExplicitDate(
+        $availability,
+        Carbon $targetDate,
+        array $bookedCountsByAvailabilityId,
+        AvailabilityOccurrenceService $occurrenceService
+    ): int {
+        if (!$occurrenceService->availabilityMatchesOccurrenceDate((string) $availability->date, $targetDate)) {
             return 0;
         }
 
         return (int) ($bookedCountsByAvailabilityId[(int) $availability->id] ?? 0);
     }
-
-    private function availabilityMatchesTargetDate(string $availabilityDate, Carbon $targetDate): bool
-    {
-        $trimmedAvailabilityDate = trim($availabilityDate);
-        if ($trimmedAvailabilityDate === '') {
-            return false;
-        }
-
-        if (strtolower($trimmedAvailabilityDate) === strtolower($targetDate->format('l'))) {
-            return true;
-        }
-
-        try {
-            $parsedDate = Carbon::createFromFormat(self::DATE_FORMAT, $trimmedAvailabilityDate, self::TIMEZONE);
-        } catch (\Throwable $exception) {
-            return false;
-        }
-
-        if ($parsedDate->format(self::DATE_FORMAT) !== $trimmedAvailabilityDate) {
-            return false;
-        }
-
-        return $parsedDate->toDateString() === $targetDate->toDateString();
-    }
-
 }

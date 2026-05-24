@@ -411,7 +411,8 @@ class DoctorAvailabilityCrudTest extends TestCase
 
             $profileResponse = $this->getJson('/api/reps/docotr/' . $doctor->id);
             $profileResponse->assertStatus(200);
-            $profileResponse->assertJsonPath('data.booked_for_date', $today);
+            $profileResponse->assertJsonPath('data.booked_for_date', null);
+            $profileResponse->assertJsonPath('data.available_times.0.counted_for_date', $today);
             $profileResponse->assertJsonPath('data.available_times.0.booked_reps_count', 2);
             $profileResponse->assertJsonPath('data.available_times.0.remaining_reps_count', 0);
             $profileResponse->assertJsonPath('data.available_times.0.is_booked_for_date', true);
@@ -421,7 +422,8 @@ class DoctorAvailabilityCrudTest extends TestCase
             $listingResponse->assertStatus(200);
             $doctorPayload = collect($listingResponse->json('data'))->firstWhere('id', $doctor->id);
             $this->assertNotNull($doctorPayload);
-            $this->assertSame($today, $doctorPayload['booked_for_date']);
+            $this->assertNull($doctorPayload['booked_for_date']);
+            $this->assertSame($today, $doctorPayload['available_times'][0]['counted_for_date']);
             $this->assertSame(2, $doctorPayload['available_times'][0]['booked_reps_count']);
             $this->assertSame(0, $doctorPayload['available_times'][0]['remaining_reps_count']);
             $this->assertTrue($doctorPayload['available_times'][0]['is_booked_for_date']);
@@ -482,6 +484,170 @@ class DoctorAvailabilityCrudTest extends TestCase
             $response->assertJsonPath('data.available_times.0.booked_reps_count', 1);
             $response->assertJsonPath('data.available_times.0.remaining_reps_count', null);
             $response->assertJsonPath('data.available_times.0.is_booked_for_date', false);
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_no_date_doctors_all_counts_use_next_occurrence_after_booking(): void
+    {
+        Carbon::setTestNow(Carbon::create(2026, 5, 26, 10, 0, 0, 'Africa/Cairo'));
+
+        try {
+            $bookingDate = Carbon::now('Africa/Cairo')->addDay()->toDateString();
+            $bookingWeekday = strtolower(Carbon::parse($bookingDate, 'Africa/Cairo')->format('l'));
+
+            $doctor = $this->createDoctor('rep-no-date-listing@example.com', '01111111307');
+            $availability = $this->createAvailability(
+                $doctor,
+                $bookingWeekday,
+                '09:00:00',
+                '10:00:00',
+                'available',
+                false,
+                2
+            );
+            $rep = $this->createRepresentative('rep-no-date-listing@example.com', '01011111208');
+            $rep->company()->update(['visits_per_day' => 5]);
+
+            Sanctum::actingAs($rep, ['representative']);
+
+            $this->postJson('/api/reps/booking', $this->bookingPayload($doctor, $bookingDate, $availability))
+                ->assertStatus(201);
+
+            $listingResponse = $this->getJson('/api/reps/doctors/all?page=1&per_page=10');
+            $listingResponse->assertStatus(200);
+            $doctorPayload = collect($listingResponse->json('data'))->firstWhere('id', $doctor->id);
+            $this->assertNotNull($doctorPayload);
+            $this->assertNull($doctorPayload['booked_for_date']);
+            $this->assertSame($bookingDate, $doctorPayload['available_times'][0]['counted_for_date']);
+            $this->assertSame(1, $doctorPayload['available_times'][0]['booked_reps_count']);
+            $this->assertSame(1, $doctorPayload['available_times'][0]['remaining_reps_count']);
+            $this->assertFalse($doctorPayload['available_times'][0]['is_booked_for_date']);
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_no_date_favorite_doctors_counts_use_next_occurrence_after_booking(): void
+    {
+        Carbon::setTestNow(Carbon::create(2026, 5, 26, 10, 0, 0, 'Africa/Cairo'));
+
+        try {
+            $bookingDate = Carbon::now('Africa/Cairo')->addDay()->toDateString();
+            $bookingWeekday = strtolower(Carbon::parse($bookingDate, 'Africa/Cairo')->format('l'));
+
+            $doctor = $this->createDoctor('rep-no-date-favorite@example.com', '01111111308');
+            $availability = $this->createAvailability(
+                $doctor,
+                $bookingWeekday,
+                '09:00:00',
+                '10:00:00',
+                'available',
+                false,
+                2
+            );
+            $rep = $this->createRepresentative('rep-no-date-favorite@example.com', '01011111209');
+            $rep->company()->update(['visits_per_day' => 5]);
+            $rep->favoriteDoctors()->attach($doctor->id, ['is_fav' => true]);
+
+            Sanctum::actingAs($rep, ['representative']);
+
+            $this->postJson('/api/reps/booking', $this->bookingPayload($doctor, $bookingDate, $availability))
+                ->assertStatus(201);
+
+            $favoriteResponse = $this->getJson('/api/reps/favorite-doctors');
+            $favoriteResponse->assertStatus(200);
+            $favoritePayload = collect($favoriteResponse->json('data'))->firstWhere('id', $doctor->id);
+            $this->assertNotNull($favoritePayload);
+            $this->assertNull($favoritePayload['booked_for_date']);
+            $this->assertSame($bookingDate, $favoritePayload['available_times'][0]['counted_for_date']);
+            $this->assertSame(1, $favoritePayload['available_times'][0]['booked_reps_count']);
+            $this->assertSame(1, $favoritePayload['available_times'][0]['remaining_reps_count']);
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_no_date_listing_returns_zero_remaining_when_next_occurrence_is_full(): void
+    {
+        Carbon::setTestNow(Carbon::create(2026, 5, 26, 10, 0, 0, 'Africa/Cairo'));
+
+        try {
+            $bookingDate = Carbon::now('Africa/Cairo')->addDay()->toDateString();
+            $bookingWeekday = strtolower(Carbon::parse($bookingDate, 'Africa/Cairo')->format('l'));
+
+            $doctor = $this->createDoctor('rep-no-date-full@example.com', '01111111309');
+            $availability = $this->createAvailability(
+                $doctor,
+                $bookingWeekday,
+                '09:00:00',
+                '10:00:00',
+                'available',
+                false,
+                2
+            );
+            $firstRep = $this->createRepresentative('rep-no-date-full-a@example.com', '01011111210');
+            $secondRep = $this->createRepresentative('rep-no-date-full-b@example.com', '01011111211');
+            $firstRep->company()->update(['visits_per_day' => 5]);
+            $secondRep->company()->update(['visits_per_day' => 5]);
+
+            $this->createAppointment($doctor, $firstRep, $bookingDate, '09:00:00', '10:00:00', 'pending', $availability);
+            $this->createAppointment($doctor, $secondRep, $bookingDate, '09:00:00', '10:00:00', 'confirmed', $availability);
+
+            Sanctum::actingAs($firstRep, ['representative']);
+
+            $listingResponse = $this->getJson('/api/reps/doctors/all');
+            $listingResponse->assertStatus(200);
+            $doctorPayload = collect($listingResponse->json('data'))->firstWhere('id', $doctor->id);
+            $this->assertNotNull($doctorPayload);
+            $this->assertSame($bookingDate, $doctorPayload['available_times'][0]['counted_for_date']);
+            $this->assertSame(2, $doctorPayload['available_times'][0]['booked_reps_count']);
+            $this->assertSame(0, $doctorPayload['available_times'][0]['remaining_reps_count']);
+            $this->assertTrue($doctorPayload['available_times'][0]['is_booked_for_date']);
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_explicit_date_still_overrides_next_occurrence_counter_scope(): void
+    {
+        Carbon::setTestNow(Carbon::create(2026, 5, 26, 10, 0, 0, 'Africa/Cairo'));
+
+        try {
+            $bookingDate = Carbon::now('Africa/Cairo')->addDay()->toDateString();
+            $otherOccurrenceDate = Carbon::parse($bookingDate, 'Africa/Cairo')->addWeek()->toDateString();
+            $bookingWeekday = strtolower(Carbon::parse($bookingDate, 'Africa/Cairo')->format('l'));
+
+            $doctor = $this->createDoctor('rep-explicit-date-override@example.com', '01111111310');
+            $availability = $this->createAvailability(
+                $doctor,
+                $bookingWeekday,
+                '09:00:00',
+                '10:00:00',
+                'available',
+                false,
+                2
+            );
+            $rep = $this->createRepresentative('rep-explicit-date-override@example.com', '01011111212');
+            $rep->company()->update(['visits_per_day' => 5]);
+
+            Sanctum::actingAs($rep, ['representative']);
+
+            $this->postJson('/api/reps/booking', $this->bookingPayload($doctor, $bookingDate, $availability))
+                ->assertStatus(201);
+
+            $noDateResponse = $this->getJson('/api/reps/docotr/' . $doctor->id);
+            $noDateResponse->assertJsonPath('data.available_times.0.booked_reps_count', 1);
+            $noDateResponse->assertJsonPath('data.available_times.0.counted_for_date', $bookingDate);
+
+            $explicitResponse = $this->getJson('/api/reps/docotr/' . $doctor->id . '?date=' . $otherOccurrenceDate);
+            $explicitResponse->assertStatus(200);
+            $explicitResponse->assertJsonPath('data.booked_for_date', $otherOccurrenceDate);
+            $explicitResponse->assertJsonPath('data.available_times.0.counted_for_date', $otherOccurrenceDate);
+            $explicitResponse->assertJsonPath('data.available_times.0.booked_reps_count', 0);
+            $explicitResponse->assertJsonPath('data.available_times.0.remaining_reps_count', 2);
+            $explicitResponse->assertJsonPath('data.available_times.0.is_booked_for_date', false);
         } finally {
             Carbon::setTestNow();
         }
