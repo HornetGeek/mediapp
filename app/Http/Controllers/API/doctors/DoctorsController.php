@@ -425,7 +425,7 @@ class DoctorsController extends Controller
         $perPage = (int) $request->input('per_page', 10);
         $doctor = $this->refreshDoctorAppointments($statusRefresh);
 
-        $appointments = Appointment::with(['representative', 'doctor', 'company', 'companyCatalog'])
+        $appointments = Appointment::with(['representative.lines', 'doctor.specialty', 'company', 'companyCatalog'])
             ->where('doctors_id', $doctor)
             ->when($request->filled('status'), function ($query) use ($request) {
                 $query->where('status', $request->status);
@@ -505,6 +505,8 @@ class DoctorsController extends Controller
             [],
             $dedupeKey
         ));
+
+        $appointment->loadMissing(['representative.lines', 'doctor.specialty', 'company', 'companyCatalog']);
 
         return ApiResponse::sendResponse(200, 'Appointment cancelled successfully', new DoctorAppointmentsResource($appointment));
     }
@@ -1005,7 +1007,7 @@ class DoctorsController extends Controller
         $perPage = (int) $request->input('per_page', 10);
         $doctor = $this->refreshDoctorAppointments($statusRefresh);
 
-        $appointments = Appointment::with(['representative', 'doctor', 'company', 'companyCatalog'])
+        $appointments = Appointment::with(['representative.lines', 'doctor.specialty', 'company', 'companyCatalog'])
             ->where('doctors_id', $doctor)
             ->where('status', 'cancelled')
             ->orderBy('date', 'asc')
@@ -1038,7 +1040,7 @@ class DoctorsController extends Controller
         $perPage = (int) $request->input('per_page', 10);
         $doctor = $this->refreshDoctorAppointments($statusRefresh);
 
-        $appointments = Appointment::with(['representative', 'doctor', 'company', 'companyCatalog'])
+        $appointments = Appointment::with(['representative.lines', 'doctor.specialty', 'company', 'companyCatalog'])
             ->where('doctors_id', $doctor)
             ->where('status', 'pending')
             ->orderBy('date', 'asc')
@@ -1071,7 +1073,7 @@ class DoctorsController extends Controller
         $perPage = (int) $request->input('per_page', 10);
         $doctor = $this->refreshDoctorAppointments($statusRefresh);
 
-        $appointments = Appointment::with(['representative', 'doctor', 'company', 'companyCatalog'])
+        $appointments = Appointment::with(['representative.lines', 'doctor.specialty', 'company', 'companyCatalog'])
             ->where('doctors_id', $doctor)
             ->where('status', 'confirmed')
             ->orderBy('date', 'asc')

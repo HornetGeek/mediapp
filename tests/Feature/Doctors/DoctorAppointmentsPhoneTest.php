@@ -7,6 +7,7 @@ use App\Models\Appointment;
 use App\Models\Company;
 use App\Models\DoctorAvailability;
 use App\Models\Doctors;
+use App\Models\Line;
 use App\Models\Package;
 use App\Models\Representative;
 use App\Models\Specialty;
@@ -29,14 +30,17 @@ class DoctorAppointmentsPhoneTest extends TestCase
     public function test_doctor_appointments_endpoint_returns_representative_phone(): void
     {
         [$doctor, $rep] = $this->seedDoctorAppointmentData('pending');
+        $line = Line::create(['name' => 'Line A']);
+        $rep->lines()->attach($line->id);
 
         Sanctum::actingAs($doctor, ['doctor']);
 
         $response = $this
-            ->getJson('/api/doctor/doctor/appointments');
+            ->getJson('/api/doctor/doctor/appointments?status=pending&page=1&per_page=5');
 
         $response->assertStatus(200);
         $response->assertJsonPath('data.0.phone', $rep->phone);
+        $response->assertJsonPath('data.0.representative.work_lines.0', $line->name);
         $response->assertJsonMissing(['phone' => $doctor->phone]);
     }
 
