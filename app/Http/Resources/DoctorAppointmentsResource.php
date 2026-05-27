@@ -29,6 +29,7 @@ class DoctorAppointmentsResource extends JsonResource
             'representative' => [
                 'id' => $this->representative->id,
                 'name' => $this->representative->name,
+                'work_lines' => $this->representativeWorkLines(),
             ],
             'phone' => $this->representative->phone,
             'date' => \Carbon\Carbon::parse($this->date)->format('Y-m-d'),
@@ -39,5 +40,26 @@ class DoctorAppointmentsResource extends JsonResource
             'company' => CompanyPayload::forAppointment($this->resource),
             'cancelled_by' => $this->cancelled_by,
         ];
+    }
+
+    private function representativeWorkLines(): array
+    {
+        $representative = $this->representative;
+        $lineNames = collect();
+
+        if (!empty($representative->requested_line_name)) {
+            $lineNames->push($representative->requested_line_name);
+        }
+
+        if ($representative->relationLoaded('lines')) {
+            $lineNames = $lineNames->merge($representative->lines->pluck('name'));
+        }
+
+        return $lineNames
+            ->filter(fn ($name) => is_string($name) && trim($name) !== '')
+            ->map(fn ($name) => trim($name))
+            ->unique()
+            ->values()
+            ->all();
     }
 }
