@@ -199,6 +199,7 @@ Route::prefix('company')->group(function () {
             Route::get('filter-reps', 'filterReps');
             // create Lines and get Lines
             Route::post('create-line', 'createLine');
+            Route::put('edit-line/{id}', 'editLine');
             Route::get('lines', 'getLines');
             // create areas
             Route::post('create-area', 'createArea');

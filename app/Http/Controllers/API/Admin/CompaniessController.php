@@ -123,6 +123,32 @@ class CompaniessController extends Controller
         return ApiResponse::sendResponse(200, 'Line created successfully', new LineResource($line));
     }
 
+    public function editLine($id, Request $request)
+    {
+        $validatedData = Validator::make($request->all(), [
+            'name' => ['required', 'string', 'max:255'],
+        ], [], [
+            'name' => 'Name',
+        ]);
+
+        if ($validatedData->fails()) {
+            return ApiResponse::sendResponse(422, 'Validation Error', $validatedData->messages()->all());
+        }
+
+        $line = Line::where('id', $id)
+            ->where('company_id', Auth::user()->id)
+            ->first();
+
+        if (!$line) {
+            return ApiResponse::sendResponse(404, 'Line not found', []);
+        }
+
+        $line->name = $request->name;
+        $line->save();
+
+        return ApiResponse::sendResponse(200, 'Line updated successfully', new LineResource($line));
+    }
+
     public function getLines()
     {
 
