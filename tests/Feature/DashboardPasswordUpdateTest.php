@@ -42,15 +42,32 @@ class DashboardPasswordUpdateTest extends TestCase
 
         $response = $this->actingAs($admin)->put('/dashboard/password', [
             'current_password' => 'old-password',
-            'password' => 'new-password',
-            'password_confirmation' => 'new-password',
+            'password' => '123',
+            'password_confirmation' => '123',
         ]);
 
         $response->assertSessionHasNoErrors()
             ->assertRedirect('/dashboard/password');
 
-        $this->assertTrue(Hash::check('new-password', $admin->refresh()->password));
+        $this->assertTrue(Hash::check('123', $admin->refresh()->password));
         $this->assertAuthenticatedAs($admin);
+    }
+
+    public function test_password_confirmation_must_match(): void
+    {
+        $admin = $this->createAdmin();
+        $oldPasswordHash = $admin->password;
+
+        $response = $this->actingAs($admin)->from('/dashboard/password')->put('/dashboard/password', [
+            'current_password' => 'old-password',
+            'password' => '123',
+            'password_confirmation' => '456',
+        ]);
+
+        $response->assertSessionHasErrors('password')
+            ->assertRedirect('/dashboard/password');
+
+        $this->assertSame($oldPasswordHash, $admin->refresh()->password);
     }
 
     public function test_wrong_current_password_does_not_update_password(): void
