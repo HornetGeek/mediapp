@@ -141,6 +141,10 @@
                                     <i class="ti ti-power"></i>
                                     <span>Logout</span>
                                 </a>
+                                <a href="{{ route('dashboard.password.edit') }}" class="dropdown-item">
+                                    <i class="ti ti-lock"></i>
+                                    <span>Change Password</span>
+                                </a>
                             </div>
                             <div class="tab-pane fade" id="drp-tab-2" role="tabpanel" aria-labelledby="drp-t2"
                                 tabindex="0">

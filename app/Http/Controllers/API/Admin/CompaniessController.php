@@ -183,6 +183,33 @@ class CompaniessController extends Controller
         return ApiResponse::sendResponse(200, 'Area created successfully', $area);
     }
 
+    public function editArea($id, Request $request)
+    {
+        $validatedData = Validator::make($request->all(), [
+            'name' => ['required', 'string', 'max:255'],
+        ], [], [
+            'name' => 'Name',
+        ]);
+
+        if ($validatedData->fails()) {
+            return ApiResponse::sendResponse(422, 'Validation Error', $validatedData->messages()->all());
+        }
+
+        $area = Area::where('id', $id)
+            ->where('company_id', Auth::user()->id)
+            ->first();
+
+        if (!$area) {
+            return ApiResponse::sendResponse(404, 'Area not found', []);
+        }
+
+        $area->name = $request->name;
+        $area->save();
+        $area->load('company');
+
+        return ApiResponse::sendResponse(200, 'Area updated successfully', new AreaResource($area));
+    }
+
     public function getAreas()
     {
 

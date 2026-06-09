@@ -203,6 +203,7 @@ Route::prefix('company')->group(function () {
             Route::get('lines', 'getLines');
             // create areas
             Route::post('create-area', 'createArea');
+            Route::put('edit-area/{id}', 'editArea');
             Route::get('areas', 'getAreas');
 
             // Notifications
