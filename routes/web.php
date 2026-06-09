@@ -4,6 +4,7 @@ use App\Http\Controllers\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\dashboard\admin\AdminController;
 use App\Http\Controllers\dashboard\admin\PushNotificationsController;
 use App\Http\Controllers\dashboard\admin\RepresentativesController;
+use App\Http\Controllers\dashboard\AccountController;
 use App\Http\Controllers\dashboard\AuthController;
 use App\Http\Controllers\dashboard\super_admin\BannerAdsController;
 use App\Http\Controllers\dashboard\super_admin\CompaniesController;
@@ -36,6 +37,11 @@ use Illuminate\Support\Facades\Route;
 
 Route::get('/', [AuthController::class, 'loginForm'])->name('login.form');
 Route::post('login', [AuthController::class, 'login'])->name('login.store');
+
+Route::middleware('auth')->prefix('dashboard')->group(function () {
+    Route::get('password', [AccountController::class, 'editPassword'])->name('dashboard.password.edit');
+    Route::put('password', [AccountController::class, 'updatePassword'])->name('dashboard.password.update');
+});
 
 Route::middleware(['auth', 'role:super_admin'])->group(function () {
     Route::prefix('superadmin')->group(function () {
