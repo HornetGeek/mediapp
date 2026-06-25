@@ -19,6 +19,14 @@ class Kernel extends ConsoleKernel
 
           // $schedule->command('doctor:monthly-reminder')->everyMinute();
 
+          $schedule->command('doctor:availability-retention-reminders')
+               ->dailyAt('08:00')
+               ->timezone('Africa/Cairo')
+               ->withoutOverlapping()
+               ->onFailure(function () {
+                    Log::error('doctor:availability-retention-reminders failed');
+               });
+
           $schedule->command('app:send-reminder-subscription-for-company')->dailyAt('01:00')->withoutOverlapping()->onFailure(function () {
                Log::error('app:send-reminder-subscription-for-company failed');
           });

@@ -393,7 +393,7 @@ class DoctorAvailabilityCrudTest extends TestCase
 
     public function test_doctor_profile_returns_availability_booking_counts_and_no_times_booked(): void
     {
-        Carbon::setTestNow(Carbon::create(2026, 4, 13, 10, 0, 0, 'Africa/Cairo'));
+        Carbon::setTestNow(Carbon::create(2026, 4, 13, 9, 30, 0, 'Africa/Cairo'));
 
         try {
             $today = Carbon::now('Africa/Cairo')->toDateString();
