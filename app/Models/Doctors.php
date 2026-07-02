@@ -16,6 +16,8 @@ class Doctors extends Authenticatable
     protected $fillable = [
         'name',
         'email',
+        'google_id',
+        'google_avatar',
         'phone',
         'password',
         'address_1',

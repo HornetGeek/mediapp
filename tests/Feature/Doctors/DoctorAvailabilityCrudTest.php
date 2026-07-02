@@ -1386,6 +1386,79 @@ class DoctorAvailabilityCrudTest extends TestCase
         ]);
     }
 
+    public function test_doctor_can_update_available_time_with_multiple_dates(): void
+    {
+        $doctor = $this->createDoctor('doctor-update-multiple-dates@example.com', '01111111260');
+        $availability = $this->createAvailability($doctor, 'monday', '09:00:00', '10:00:00');
+
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $response = $this->putJson('/api/doctor/available-time/' . $availability->id, [
+            'date' => ['tuesday', 'wednesday'],
+            'start_time' => '11:00 AM',
+            'end_time' => '12:00 PM',
+            'max_reps_per_range' => 3,
+            'visit_time_type' => 'after',
+        ]);
+
+        $response->assertStatus(200);
+        $response->assertJsonCount(2, 'data.available_times');
+        $response->assertJsonPath('data.available_times.0.date', 'Tuesday');
+        $response->assertJsonPath('data.available_times.1.date', 'Wednesday');
+
+        $this->assertDatabaseHas('doctor_availabilities', [
+            'id' => $availability->id,
+            'doctors_id' => $doctor->id,
+            'date' => 'tuesday',
+            'start_time' => '11:00:00',
+            'end_time' => '12:00:00',
+            'max_reps_per_range' => 3,
+            'visit_time_type' => 'after',
+            'status' => 'available',
+        ]);
+        $this->assertDatabaseHas('doctor_availabilities', [
+            'doctors_id' => $doctor->id,
+            'date' => 'wednesday',
+            'start_time' => '11:00:00',
+            'end_time' => '12:00:00',
+            'max_reps_per_range' => 3,
+            'visit_time_type' => 'after',
+            'status' => 'available',
+        ]);
+        $this->assertSame(2, DoctorAvailability::where('doctors_id', $doctor->id)->where('status', 'available')->count());
+    }
+
+    public function test_update_available_time_with_multiple_dates_rejects_all_when_one_date_conflicts(): void
+    {
+        $doctor = $this->createDoctor('doctor-update-multiple-dates-conflict@example.com', '01111111261');
+        $availability = $this->createAvailability($doctor, 'monday', '09:00:00', '10:00:00');
+        $this->createAvailability($doctor, 'wednesday', '11:30:00', '12:30:00');
+
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $response = $this->putJson('/api/doctor/available-time/' . $availability->id, [
+            'date' => ['tuesday', 'wednesday'],
+            'start_time' => '11:00 AM',
+            'end_time' => '12:00 PM',
+        ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonPath('message', 'This time conflicts with an existing availability');
+
+        $this->assertDatabaseHas('doctor_availabilities', [
+            'id' => $availability->id,
+            'date' => 'monday',
+            'start_time' => '09:00:00',
+            'end_time' => '10:00:00',
+        ]);
+        $this->assertDatabaseMissing('doctor_availabilities', [
+            'doctors_id' => $doctor->id,
+            'date' => 'tuesday',
+            'start_time' => '11:00:00',
+            'end_time' => '12:00:00',
+        ]);
+    }
+
     public function test_doctor_can_update_existing_available_time_with_same_values(): void
     {
         $doctor = $this->createDoctor('doctor-update-2@example.com', '01111111192');
@@ -1939,6 +2012,79 @@ class DoctorAvailabilityCrudTest extends TestCase
                 ->where('status', 'available')
                 ->count()
         );
+    }
+
+    public function test_save_available_time_accepts_multiple_dates_and_creates_one_row_per_date(): void
+    {
+        $doctor = $this->createDoctor('doctor-create-multiple-dates@example.com', '01111111262');
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $response = $this->putJson('/api/doctor/save-available-time', [
+            'date' => ['monday', 'tuesday', '2026-04-22'],
+            'start_time' => '09:00 AM',
+            'end_time' => '10:00 AM',
+            'max_reps_per_range' => 4,
+            'visit_time_type' => 'before',
+        ]);
+
+        $response->assertStatus(200);
+        $response->assertJsonCount(3, 'data.available_times');
+        $response->assertJsonPath('data.available_times.0.date', 'Monday');
+        $response->assertJsonPath('data.available_times.1.date', 'Tuesday');
+        $response->assertJsonPath('data.available_times.2.date', 'Wednesday');
+
+        foreach (['monday', 'tuesday', 'wednesday'] as $weekday) {
+            $this->assertDatabaseHas('doctor_availabilities', [
+                'doctors_id' => $doctor->id,
+                'date' => $weekday,
+                'start_time' => '09:00:00',
+                'end_time' => '10:00:00',
+                'max_reps_per_range' => 4,
+                'visit_time_type' => 'before',
+                'status' => 'available',
+            ]);
+        }
+    }
+
+    public function test_save_available_time_with_multiple_dates_rejects_all_when_one_date_conflicts(): void
+    {
+        $doctor = $this->createDoctor('doctor-create-multiple-dates-conflict@example.com', '01111111263');
+        $this->createAvailability($doctor, 'tuesday', '09:30:00', '10:30:00');
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $response = $this->putJson('/api/doctor/save-available-time', [
+            'date' => ['monday', 'tuesday'],
+            'start_time' => '09:00 AM',
+            'end_time' => '10:00 AM',
+        ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonPath('message', 'This time conflicts with an existing availability');
+
+        $this->assertDatabaseMissing('doctor_availabilities', [
+            'doctors_id' => $doctor->id,
+            'date' => 'monday',
+            'start_time' => '09:00:00',
+            'end_time' => '10:00:00',
+        ]);
+        $this->assertSame(1, DoctorAvailability::where('doctors_id', $doctor->id)->where('status', 'available')->count());
+    }
+
+    public function test_save_available_time_rejects_duplicate_normalized_dates(): void
+    {
+        $doctor = $this->createDoctor('doctor-create-multiple-dates-duplicate@example.com', '01111111264');
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $response = $this->putJson('/api/doctor/save-available-time', [
+            'date' => ['monday', '2026-04-20'],
+            'start_time' => '09:00 AM',
+            'end_time' => '10:00 AM',
+        ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonPath('message', 'Duplicate availability date in request');
+
+        $this->assertSame(0, DoctorAvailability::where('doctors_id', $doctor->id)->count());
     }
 
     public function test_save_available_time_rejects_exact_duplicate_slot_on_same_weekday(): void

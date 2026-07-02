@@ -31,4 +31,8 @@ return [
         'region' => env('AWS_DEFAULT_REGION', 'us-east-1'),
     ],
 
+    'google' => [
+        'client_ids' => array_values(array_filter(array_map('trim', explode(',', env('GOOGLE_CLIENT_IDS', ''))))),
+    ],
+
 ];
