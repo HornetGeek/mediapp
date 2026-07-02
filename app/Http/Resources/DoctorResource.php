@@ -121,7 +121,7 @@ class DoctorResource extends JsonResource
             'name' => $this->name,
             'email' => $this->email,
             'phone' => $this->phone,
-            'specialty' => $this->specialty->name ?? 'N/A',
+            'specialty' => $this->specialty->name ?? null,
             'address_1' => $this->address_1,
             'booked_for_date' => $hasExplicitDate ? $explicitDate : null,
             'available_times' => AppAvailableTimeResource::collection($availableTimes),
