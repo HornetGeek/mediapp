@@ -94,8 +94,17 @@ class DoctorsController extends Controller
         $validated = Validator::make($request->all(), [
             'name' => ['sometimes', 'string', 'max:255'],
             'email' => ['sometimes', 'email', 'max:255', 'unique:doctors,email,' . $doctor->id],
-            'phone' => ['sometimes', 'string', 'max:20', 'unique:doctors,phone,' . $doctor->id],
-            'specialty_id' => ['sometimes', 'exists:specialties,id'],
+            'phone' => ['sometimes', 'nullable', 'string', 'max:20', 'unique:doctors,phone,' . $doctor->id],
+            'address_1' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'specialty_id' => ['sometimes', 'nullable', 'exists:specialties,id'],
+            'available_times' => ['sometimes', 'array'],
+            'available_times.*' => ['array'],
+            'available_times.*.date' => ['required_with:available_times'],
+            'available_times.*.start_time' => ['required_with:available_times', 'string'],
+            'available_times.*.end_time' => ['required_with:available_times', 'string'],
+            'available_times.*.ends_next_day' => ['nullable', 'boolean'],
+            'available_times.*.max_reps_per_range' => ['nullable', 'integer', 'min:1'],
+            'available_times.*.visit_time_type' => ['sometimes', 'required', 'string', 'in:before,after,between'],
         ]);
         // $request->validate([
         //     'name' => ['sometimes', 'string', 'max:255'],
@@ -108,10 +117,32 @@ class DoctorsController extends Controller
             return ApiResponse::sendResponse(422, $validated->messages()->first(), []);
         }
 
-        $doctor->update($request->only(['name', 'email', 'phone', 'specialty_id']));
-        $doctor->save();
+        $availabilityPayloads = [];
+        foreach ((array) $request->input('available_times', []) as $availabilityInput) {
+            $availabilityPayload = $this->prepareAvailabilityCreationPayload($doctor, $availabilityInput);
+            if (isset($availabilityPayload['error'])) {
+                return ApiResponse::sendResponse(422, $availabilityPayload['error'], []);
+            }
 
-        return ApiResponse::sendResponse(200, 'Doctor profile updated successfully', new DoctorResource($doctor));
+            $availabilityPayloads[] = $availabilityPayload;
+        }
+        if ($this->hasPreparedAvailabilityOverlap($availabilityPayloads)) {
+            return ApiResponse::sendResponse(422, 'This time conflicts with an existing availability', []);
+        }
+
+        DB::transaction(function () use ($doctor, $request, $availabilityPayloads) {
+            $doctor->update($request->only(['name', 'email', 'phone', 'address_1', 'specialty_id']));
+
+            foreach ($availabilityPayloads as $availabilityPayload) {
+                $this->createAvailabilityRows($doctor, $availabilityPayload);
+            }
+        });
+
+        return ApiResponse::sendResponse(200, 'Doctor profile updated successfully', DoctorResource::make($doctor->fresh()->load([
+            'availableTimes' => function ($query) {
+                $query->where('status', 'available');
+            }
+        ])));
     }
 
     public function editStatus(Request $request, DoctorBusyStatusService $doctorBusyStatus)
@@ -209,54 +240,13 @@ class DoctorsController extends Controller
             return ApiResponse::sendResponse(422,$validator->errors()->first(),[]);
         }
         $validated = $validator->validated();
-        $normalizedDates = $this->normalizeAvailabilityDates($validated['date']);
-        if (isset($normalizedDates['error'])) {
-            return ApiResponse::sendResponse(422, $normalizedDates['error'], []);
+        $availabilityPayload = $this->prepareAvailabilityCreationPayload($doctor, $validated);
+        if (isset($availabilityPayload['error'])) {
+            return ApiResponse::sendResponse(422, $availabilityPayload['error'], []);
         }
 
-        $endsNextDay = (bool) ($validated['ends_next_day'] ?? false);
-        $normalizedTimes = $this->normalizeAvailabilityTimes($validated['start_time'], $validated['end_time'], $endsNextDay);
-        if (isset($normalizedTimes['error'])) {
-            return ApiResponse::sendResponse(422, $normalizedTimes['error'], []);
-        }
-
-        $requestedMaxRepsPerRange = isset($validated['max_reps_per_range'])
-            ? (int) $validated['max_reps_per_range']
-            : null;
-
-        if ($this->hasRequestedAvailabilityOverlap(
-            $normalizedDates['dates'],
-            $normalizedTimes['start_time'],
-            $normalizedTimes['end_time'],
-            $normalizedTimes['ends_next_day']
-        )) {
-            return ApiResponse::sendResponse(422, 'This time conflicts with an existing availability', []);
-        }
-
-        foreach ($normalizedDates['dates'] as $normalizedDate) {
-            if ($this->hasAvailabilityOverlap(
-                (int) $doctor->id,
-                $normalizedDate,
-                $normalizedTimes['start_time'],
-                $normalizedTimes['end_time'],
-                $normalizedTimes['ends_next_day']
-            )) {
-                return ApiResponse::sendResponse(422, 'This time conflicts with an existing availability', []);
-            }
-        }
-
-        DB::transaction(function () use ($doctor, $normalizedDates, $normalizedTimes, $requestedMaxRepsPerRange, $validated) {
-            foreach ($normalizedDates['dates'] as $normalizedDate) {
-                $doctor->availableTimes()->create([
-                    'date' => $normalizedDate,
-                    'start_time' => $normalizedTimes['start_time'],
-                    'end_time' => $normalizedTimes['end_time'],
-                    'ends_next_day' => $normalizedTimes['ends_next_day'],
-                    'max_reps_per_range' => $requestedMaxRepsPerRange,
-                    'visit_time_type' => $validated['visit_time_type'] ?? 'between',
-                    'status' => 'available',
-                ]);
-            }
+        DB::transaction(function () use ($doctor, $availabilityPayload) {
+            $this->createAvailabilityRows($doctor, $availabilityPayload);
         });
 
         return ApiResponse::sendResponse(200, 'Availabilities saved successfully', DoctorResource::make($doctor->load([
@@ -1197,6 +1187,107 @@ class DoctorsController extends Controller
             'end_time' => $normalizedEndTime,
             'ends_next_day' => $endsNextDay,
         ];
+    }
+
+    private function prepareAvailabilityCreationPayload(Doctors $doctor, array $validated): array
+    {
+        $normalizedDates = $this->normalizeAvailabilityDates($validated['date'] ?? null);
+        if (isset($normalizedDates['error'])) {
+            return ['error' => $normalizedDates['error']];
+        }
+
+        $endsNextDay = (bool) ($validated['ends_next_day'] ?? false);
+        $normalizedTimes = $this->normalizeAvailabilityTimes(
+            (string) ($validated['start_time'] ?? ''),
+            (string) ($validated['end_time'] ?? ''),
+            $endsNextDay
+        );
+        if (isset($normalizedTimes['error'])) {
+            return ['error' => $normalizedTimes['error']];
+        }
+
+        if ($this->hasRequestedAvailabilityOverlap(
+            $normalizedDates['dates'],
+            $normalizedTimes['start_time'],
+            $normalizedTimes['end_time'],
+            $normalizedTimes['ends_next_day']
+        )) {
+            return ['error' => 'This time conflicts with an existing availability'];
+        }
+
+        foreach ($normalizedDates['dates'] as $normalizedDate) {
+            if ($this->hasAvailabilityOverlap(
+                (int) $doctor->id,
+                $normalizedDate,
+                $normalizedTimes['start_time'],
+                $normalizedTimes['end_time'],
+                $normalizedTimes['ends_next_day']
+            )) {
+                return ['error' => 'This time conflicts with an existing availability'];
+            }
+        }
+
+        return [
+            'dates' => $normalizedDates['dates'],
+            'start_time' => $normalizedTimes['start_time'],
+            'end_time' => $normalizedTimes['end_time'],
+            'ends_next_day' => $normalizedTimes['ends_next_day'],
+            'max_reps_per_range' => isset($validated['max_reps_per_range'])
+                ? (int) $validated['max_reps_per_range']
+                : null,
+            'visit_time_type' => $validated['visit_time_type'] ?? 'between',
+        ];
+    }
+
+    private function createAvailabilityRows(Doctors $doctor, array $availabilityPayload): void
+    {
+        foreach ($availabilityPayload['dates'] as $normalizedDate) {
+            $doctor->availableTimes()->create([
+                'date' => $normalizedDate,
+                'start_time' => $availabilityPayload['start_time'],
+                'end_time' => $availabilityPayload['end_time'],
+                'ends_next_day' => $availabilityPayload['ends_next_day'],
+                'max_reps_per_range' => $availabilityPayload['max_reps_per_range'],
+                'visit_time_type' => $availabilityPayload['visit_time_type'],
+                'status' => 'available',
+            ]);
+        }
+    }
+
+    private function hasPreparedAvailabilityOverlap(array $availabilityPayloads): bool
+    {
+        $intervals = [];
+        foreach ($availabilityPayloads as $availabilityPayload) {
+            foreach ($availabilityPayload['dates'] as $date) {
+                $targetWeekday = $this->normalizeStoredAvailabilityWeekday($date);
+                if ($targetWeekday === null) {
+                    continue;
+                }
+
+                $intervals[] = $this->buildWeekdayInterval(
+                    $targetWeekday,
+                    $availabilityPayload['start_time'],
+                    $availabilityPayload['end_time'],
+                    $availabilityPayload['ends_next_day']
+                );
+            }
+        }
+
+        $intervalCount = count($intervals);
+        for ($leftIndex = 0; $leftIndex < $intervalCount; $leftIndex++) {
+            for ($rightIndex = $leftIndex + 1; $rightIndex < $intervalCount; $rightIndex++) {
+                if ($this->recurringIntervalsOverlap(
+                    $intervals[$leftIndex]['start_at'],
+                    $intervals[$leftIndex]['end_at'],
+                    $intervals[$rightIndex]['start_at'],
+                    $intervals[$rightIndex]['end_at']
+                )) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private function normalizeEndTimeBoundary(string $endTime): string

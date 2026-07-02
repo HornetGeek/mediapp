@@ -371,6 +371,25 @@ class DoctorAvailabilityCrudTest extends TestCase
         $this->assertSame($endpointIds, $profileIds);
     }
 
+    public function test_doctor_profile_returns_null_specialty_when_doctor_has_no_specialty(): void
+    {
+        $doctor = Doctors::create([
+            'name' => 'Doctor Without Specialty',
+            'email' => 'doctor-without-specialty@example.com',
+            'phone' => '01111111236',
+            'password' => 'secret123',
+            'specialty_id' => null,
+            'status' => 'active',
+        ]);
+
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $profileResponse = $this->getJson('/api/doctor/profile');
+
+        $profileResponse->assertStatus(200);
+        $profileResponse->assertJsonPath('data.specialty', null);
+    }
+
     public function test_representative_doctor_profile_endpoint_returns_only_available_times(): void
     {
         $doctor = $this->createDoctor('rep-doctor-profile-filter@example.com', '01111111235');
@@ -1356,6 +1375,121 @@ class DoctorAvailabilityCrudTest extends TestCase
         $editStatusResponse->assertJsonCount(1, 'data.available_times');
         $editStatusResponse->assertJsonPath('data.available_times.0.status', 'available');
         $editStatusResponse->assertJsonPath('data.available_times.0.date', 'Monday');
+    }
+
+    public function test_doctor_edit_profile_updates_missing_profile_fields(): void
+    {
+        $doctor = $this->createDoctor('doctor-edit-profile-fields@example.com', '01111111237');
+        $specialty = Specialty::create(['name' => 'Neurology', 'slug' => 'neurology']);
+
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $response = $this->putJson('/api/doctor/edit-profile', [
+            'name' => 'Updated Doctor Name',
+            'phone' => '01111111999',
+            'address_1' => 'Updated Clinic Address',
+            'specialty_id' => $specialty->id,
+        ]);
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('data.name', 'Updated Doctor Name');
+        $response->assertJsonPath('data.phone', '01111111999');
+        $response->assertJsonPath('data.address_1', 'Updated Clinic Address');
+        $response->assertJsonPath('data.specialty', 'Neurology');
+
+        $this->assertDatabaseHas('doctors', [
+            'id' => $doctor->id,
+            'name' => 'Updated Doctor Name',
+            'phone' => '01111111999',
+            'address_1' => 'Updated Clinic Address',
+            'specialty_id' => $specialty->id,
+        ]);
+    }
+
+    public function test_doctor_edit_profile_can_create_available_times(): void
+    {
+        $doctor = $this->createDoctor('doctor-edit-profile-availability@example.com', '01111111240');
+
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $response = $this->putJson('/api/doctor/edit-profile', [
+            'address_1' => 'Clinic Address',
+            'available_times' => [
+                [
+                    'date' => 'monday',
+                    'start_time' => '09:00 AM',
+                    'end_time' => '10:00 AM',
+                    'max_reps_per_range' => 3,
+                    'visit_time_type' => 'between',
+                ],
+                [
+                    'date' => 'tuesday',
+                    'start_time' => '11:00',
+                    'end_time' => '12:00',
+                    'ends_next_day' => false,
+                    'visit_time_type' => 'after',
+                ],
+            ],
+        ]);
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('data.address_1', 'Clinic Address');
+        $response->assertJsonCount(2, 'data.available_times');
+        $response->assertJsonPath('data.available_times.0.date', 'Monday');
+        $response->assertJsonPath('data.available_times.0.max_reps_per_range', 3);
+        $response->assertJsonPath('data.available_times.1.date', 'Tuesday');
+        $response->assertJsonPath('data.available_times.1.visit_time_type', 'after');
+
+        $this->assertDatabaseHas('doctor_availabilities', [
+            'doctors_id' => $doctor->id,
+            'date' => 'monday',
+            'start_time' => '09:00:00',
+            'end_time' => '10:00:00',
+            'max_reps_per_range' => 3,
+            'visit_time_type' => 'between',
+            'status' => 'available',
+        ]);
+        $this->assertDatabaseHas('doctor_availabilities', [
+            'doctors_id' => $doctor->id,
+            'date' => 'tuesday',
+            'start_time' => '11:00:00',
+            'end_time' => '12:00:00',
+            'visit_time_type' => 'after',
+            'status' => 'available',
+        ]);
+    }
+
+    public function test_doctor_edit_profile_rejects_overlapping_available_times_without_partial_update(): void
+    {
+        $doctor = $this->createDoctor('doctor-edit-profile-overlap@example.com', '01111111242');
+
+        Sanctum::actingAs($doctor, ['doctor']);
+
+        $response = $this->putJson('/api/doctor/edit-profile', [
+            'address_1' => 'Should Not Persist',
+            'available_times' => [
+                [
+                    'date' => 'monday',
+                    'start_time' => '09:00 AM',
+                    'end_time' => '11:00 AM',
+                ],
+                [
+                    'date' => 'monday',
+                    'start_time' => '10:00 AM',
+                    'end_time' => '12:00 PM',
+                ],
+            ],
+        ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonPath('message', 'This time conflicts with an existing availability');
+
+        $doctor->refresh();
+        $this->assertNull($doctor->address_1);
+        $this->assertDatabaseMissing('doctor_availabilities', [
+            'doctors_id' => $doctor->id,
+            'date' => 'monday',
+        ]);
     }
 
     public function test_doctor_can_update_own_available_time(): void
