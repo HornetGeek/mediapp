@@ -148,6 +148,33 @@ class DoctorGoogleAuthTest extends TestCase
         $this->assertDatabaseCount('personal_access_tokens', 1);
     }
 
+    public function test_google_register_allows_missing_phone_and_address(): void
+    {
+        $this->fakeGooglePayload([
+            'sub' => 'google-doctor-7',
+            'email' => 'optional-fields-doctor@example.com',
+            'email_verified' => true,
+            'name' => 'Optional Fields Doctor',
+        ]);
+
+        $response = $this->postJson('/api/doctor/google-register', [
+            'id_token' => 'valid-google-token',
+        ]);
+
+        $response->assertStatus(201);
+        $response->assertJsonPath('data.name', 'Optional Fields Doctor');
+        $response->assertJsonPath('data.email', 'optional-fields-doctor@example.com');
+        $this->assertNotEmpty($response->json('data.token'));
+
+        $this->assertDatabaseHas('doctors', [
+            'name' => 'Optional Fields Doctor',
+            'email' => 'optional-fields-doctor@example.com',
+            'google_id' => 'google-doctor-7',
+            'phone' => null,
+            'address_1' => null,
+        ]);
+    }
+
     public function test_google_auth_rejects_invalid_or_unverified_google_token(): void
     {
         $this->fakeGooglePayload(null);

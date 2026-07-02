@@ -117,8 +117,8 @@ class AuthDoctorsController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'id_token' => ['required', 'string'],
-            'phone' => ['required', 'string', 'max:255'],
-            'address_1' => ['required', 'string', 'max:255'],
+            'phone' => ['nullable', 'string', 'max:255'],
+            'address_1' => ['nullable', 'string', 'max:255'],
             'specialty_id' => ['nullable', 'exists:specialties,id'],
             'fcm_token' => ['nullable', 'string'],
         ], [], [
@@ -150,9 +150,9 @@ class AuthDoctorsController extends Controller
             'email' => $email,
             'google_id' => $googleId,
             'google_avatar' => $googlePayload['picture'] ?? null,
-            'phone' => $this->normalizePhone((string) $request->input('phone')),
+            'phone' => $this->normalizeOptionalPhone($request->input('phone')),
             'password' => Hash::make(Str::random(40)),
-            'address_1' => $request->input('address_1'),
+            'address_1' => $this->normalizeOptionalString($request->input('address_1')),
             'specialty_id' => $request->input('specialty_id'),
             'fcm_token' => $request->input('fcm_token'),
         ]);
@@ -236,5 +236,29 @@ class AuthDoctorsController extends Controller
         $normalized = $prefix . $digits;
 
         return preg_replace('/^(\+?20|0020)0(?=1)/', '$1', $normalized) ?? $normalized;
+    }
+
+    private function normalizeOptionalPhone($phone): ?string
+    {
+        if (!is_string($phone)) {
+            return null;
+        }
+
+        $trimmed = trim($phone);
+        if ($trimmed === '') {
+            return null;
+        }
+
+        return $this->normalizePhone($trimmed);
+    }
+
+    private function normalizeOptionalString($value): ?string
+    {
+        if (!is_string($value)) {
+            return null;
+        }
+
+        $trimmed = trim($value);
+        return $trimmed === '' ? null : $trimmed;
     }
 }
