@@ -18,6 +18,7 @@ class NotificationsResource extends JsonResource
             'id' => $this->id,
             'title' => $this->title,
             'body' => $this->body,
+            'data' => $this->data ?? [],
             'display_type' => $this->display_type ?? 'list',
             'is_skippable' => (bool) ($this->is_skippable ?? true),
             'media_type' => $this->media_type ?? 'none',

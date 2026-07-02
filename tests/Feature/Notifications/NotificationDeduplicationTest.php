@@ -129,6 +129,55 @@ class NotificationDeduplicationTest extends TestCase
         $this->assertDatabaseCount('notifications', 0);
     }
 
+    public function test_listener_persists_notification_data_payload(): void
+    {
+        Carbon::setTestNow('2026-06-01 10:00:00');
+
+        $doctor = Doctors::create([
+            'name' => 'Doctor Seven',
+            'email' => 'doctor-seven@example.com',
+            'phone' => '01010000007',
+            'password' => 'secret',
+            'fcm_token' => 'token-7',
+        ]);
+
+        $payload = [
+            'type' => 'doctor_availability_reminder',
+            'action_type' => 'open_availability_setup',
+            'screen' => 'doctor_availability_setup',
+            'deep_link' => 'mediapp://doctor/availability/setup',
+            'stage' => 'first_setup',
+            'target_type' => 'doctor',
+        ];
+
+        $service = Mockery::mock(FirebaseNotificationService::class);
+        $service->shouldReceive('sendNotification')
+            ->once()
+            ->with(
+                'token-7',
+                'Reminder',
+                'Open setup',
+                Mockery::on(fn ($data) => ($data['stage'] ?? null) === 'first_setup'),
+                null
+            )
+            ->andReturn(['ok' => true]);
+
+        $listener = new SendFcmNotificationListener($service);
+        $listener->handle(new SendNotificationEvent(
+            $doctor,
+            'Reminder',
+            'Open setup',
+            'doctor',
+            $payload,
+            'payload-dedupe-key'
+        ));
+
+        $notification = Notification::query()->firstOrFail();
+
+        $this->assertSame('first_setup', $notification->data['stage']);
+        $this->assertSame('mediapp://doctor/availability/setup', $notification->data['deep_link']);
+    }
+
     public function test_listener_skips_fcm_when_insert_or_ignore_detects_existing_fingerprint(): void
     {
         Carbon::setTestNow('2026-06-01 10:00:00');
@@ -264,10 +313,24 @@ class NotificationDeduplicationTest extends TestCase
             ->once()
             ->andReturn(['ok' => true]);
 
-        Log::spy();
+        $dedupeKey = sprintf('appointment:%d:booked:to:doctor:%d', 500, $doctor->id);
+        $bookedDebugContext = null;
+        Log::shouldReceive('info')
+            ->zeroOrMoreTimes()
+            ->withArgs(function ($message, $context = []) use (&$bookedDebugContext, $doctor, $dedupeKey) {
+                if ($message === 'Booked notification dedupe debug'
+                    && ($context['notifiable_id'] ?? null) === $doctor->id
+                    && ($context['dedupe_key'] ?? null) === $dedupeKey
+                    && ($context['inserted'] ?? null) === 1
+                    && !empty($context['notification_id'])
+                ) {
+                    $bookedDebugContext = $context;
+                }
+
+                return true;
+            });
 
         $listener = new SendFcmNotificationListener($service);
-        $dedupeKey = sprintf('appointment:%d:booked:to:doctor:%d', 500, $doctor->id);
 
         $listener->handle(new SendNotificationEvent(
             $doctor,
@@ -278,15 +341,7 @@ class NotificationDeduplicationTest extends TestCase
             $dedupeKey
         ));
 
-        Log::shouldHaveReceived('info')
-            ->withArgs(function ($message, $context) use ($doctor, $dedupeKey) {
-                return $message === 'Booked notification dedupe debug'
-                    && ($context['notifiable_id'] ?? null) === $doctor->id
-                    && ($context['dedupe_key'] ?? null) === $dedupeKey
-                    && ($context['inserted'] ?? null) === 1
-                    && !empty($context['notification_id']);
-            })
-            ->once();
+        $this->assertNotNull($bookedDebugContext);
     }
 
     public function test_listener_does_not_emit_booked_debug_logs_when_disabled(): void
@@ -307,7 +362,16 @@ class NotificationDeduplicationTest extends TestCase
             ->once()
             ->andReturn(['ok' => true]);
 
-        Log::spy();
+        $bookedDebugWasLogged = false;
+        Log::shouldReceive('info')
+            ->zeroOrMoreTimes()
+            ->withArgs(function ($message) use (&$bookedDebugWasLogged) {
+                if ($message === 'Booked notification dedupe debug') {
+                    $bookedDebugWasLogged = true;
+                }
+
+                return true;
+            });
 
         $listener = new SendFcmNotificationListener($service);
         $dedupeKey = sprintf('appointment:%d:booked:to:doctor:%d', 501, $doctor->id);
@@ -321,10 +385,7 @@ class NotificationDeduplicationTest extends TestCase
             $dedupeKey
         ));
 
-        Log::shouldNotHaveReceived('info')
-            ->withArgs(function ($message) {
-                return $message === 'Booked notification dedupe debug';
-            });
+        $this->assertFalse($bookedDebugWasLogged);
     }
 
     private function createTestingSchema(): void
@@ -349,6 +410,13 @@ class NotificationDeduplicationTest extends TestCase
             $table->id();
             $table->string('title');
             $table->text('body');
+            $table->json('data')->nullable();
+            $table->string('image_url')->nullable();
+            $table->string('video_url')->nullable();
+            $table->enum('media_type', ['none', 'image', 'video'])->default('none');
+            $table->enum('display_type', ['list', 'modal'])->default('list');
+            $table->boolean('is_skippable')->default(true);
+            $table->timestamp('acknowledged_at')->nullable();
             $table->boolean('is_read')->default(false);
             $table->enum('target_type', ['doctor', 'reps', 'company'])->nullable();
             $table->string('dedupe_key')->nullable();

@@ -12,6 +12,7 @@ class Notification extends Model
     protected $fillable = [
         'title',
         'body',
+        'data',
         'image_url',
         'video_url',
         'media_type',
@@ -27,6 +28,7 @@ class Notification extends Model
     ];
 
     protected $casts = [
+        'data' => 'array',
         'is_read' => 'boolean',
         'is_skippable' => 'boolean',
         'acknowledged_at' => 'datetime',

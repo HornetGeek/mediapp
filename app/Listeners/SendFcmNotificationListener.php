@@ -65,6 +65,7 @@ class SendFcmNotificationListener
                 $inserted = Notification::query()->insertOrIgnore([
                     'title' => $event->title,
                     'body' => $event->body,
+                    'data' => $this->encodeNotificationData($event->data ?? []),
                     'image_url' => $event->image_url ?? null,
                     'video_url' => $event->video_url ?? null,
                     'media_type' => $event->media_type ?? 'none',
@@ -175,6 +176,17 @@ class SendFcmNotificationListener
         }
 
         return null;
+    }
+
+    private function encodeNotificationData(array $data): ?string
+    {
+        if (empty($data)) {
+            return null;
+        }
+
+        $encoded = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+        return $encoded === false ? null : $encoded;
     }
 
     private function buildDedupeFingerprint(

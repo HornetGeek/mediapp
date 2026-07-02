@@ -115,6 +115,8 @@ Route::prefix('super-admin')->group(function () {
 Route::prefix('doctor')->group(function () {
     Route::post('register', [AuthDoctorsController::class, 'register']);
     Route::post('login', [AuthDoctorsController::class, 'login']);
+    Route::post('google-auth', [AuthDoctorsController::class, 'googleAuth']);
+    Route::post('google-register', [AuthDoctorsController::class, 'googleRegister']);
     Route::post('/forgot-password', [ForgotPasswordDoctorController::class, 'sendResetCode']);
     Route::post('/verify-code', [ForgotPasswordDoctorController::class, 'verifyCode']);
     Route::post('/reset-password', [ForgotPasswordDoctorController::class, 'resetPassword']);
