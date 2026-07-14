@@ -66,6 +66,7 @@ class RepFavoriteDoctorController extends Controller
 
         $rep = auth()->user();
         $favoriteDoctors = $rep->favoriteDoctors()
+            ->completeProfile()
             ->with([
                 'availableTimes' => function ($query) {
                     $query->where('status', 'available');
@@ -100,6 +101,7 @@ class RepFavoriteDoctorController extends Controller
         $search = trim((string) $request->input('search'));
 
         $favoriteDoctors = $rep->favoriteDoctors()
+            ->completeProfile()
             ->favoriteFilter($search)
             ->with([
                 'availableTimes' => function ($query) {

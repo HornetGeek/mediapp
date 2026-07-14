@@ -122,7 +122,9 @@ class RepsController extends Controller
             'availableTimes' => function ($query) {
                 $query->where('status', 'available');
             },
-        ])->find($doctor_id);
+        ])
+            ->completeProfile()
+            ->find($doctor_id);
 
         if (!$doctor) {
             return ApiResponse::sendResponse(404, 'Doctor not found', []);
@@ -168,6 +170,7 @@ class RepsController extends Controller
                 $query->where('representative_id', auth()->id());
             }
         ])
+            ->completeProfile()
             ->whereDoesntHave('blocks', function ($q) use ($representative) {
                 $q->where(function ($sub) use ($representative) {
                     $sub->where('blockable_type', Representative::class)
@@ -271,6 +274,7 @@ class RepsController extends Controller
                 $query->where('status', 'available');
             },
         ])
+            ->completeProfile()
             ->filter($filters)
             ->whereDoesntHave('blocks', function ($q) use ($rep) {
                 $q->where(function ($q2) use ($rep) {
@@ -868,6 +872,7 @@ class RepsController extends Controller
                 $query->where('status', 'available');
             },
         ])
+            ->completeProfile()
             ->when($speciality_id, function ($query, $speciality_id) {
                 $query->where('specialty_id', $speciality_id);
             })
