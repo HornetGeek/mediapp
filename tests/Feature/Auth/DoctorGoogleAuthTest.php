@@ -175,6 +175,109 @@ class DoctorGoogleAuthTest extends TestCase
         ]);
     }
 
+    public function test_google_register_can_create_availability_and_return_token_that_updates_profile(): void
+    {
+        $this->fakeGooglePayload([
+            'sub' => 'google-doctor-8',
+            'email' => 'availability-google-doctor@example.com',
+            'email_verified' => true,
+            'name' => 'Availability Google Doctor',
+        ]);
+
+        $authResponse = $this->postJson('/api/doctor/google-auth', [
+            'id_token' => 'valid-google-token',
+        ]);
+
+        $authResponse->assertStatus(200);
+        $authResponse->assertJsonPath('data.profile_required', true);
+        $this->assertNull($authResponse->json('data.token'));
+
+        $registerResponse = $this->postJson('/api/doctor/google-register', [
+            'id_token' => 'valid-google-token',
+            'address_1' => 'Onboarding Clinic',
+            'available_times' => [
+                [
+                    'date' => 'monday',
+                    'start_time' => '09:00 AM',
+                    'end_time' => '10:00 AM',
+                    'max_reps_per_range' => 3,
+                    'visit_time_type' => 'between',
+                ],
+                [
+                    'date' => 'tuesday',
+                    'start_time' => '11:00',
+                    'end_time' => '12:00',
+                    'visit_time_type' => 'after',
+                ],
+            ],
+        ]);
+
+        $registerResponse->assertStatus(201);
+        $this->assertNotEmpty($registerResponse->json('data.token'));
+        $this->assertDatabaseHas('doctors', [
+            'email' => 'availability-google-doctor@example.com',
+            'address_1' => 'Onboarding Clinic',
+        ]);
+        $this->assertDatabaseHas('doctor_availabilities', [
+            'date' => 'monday',
+            'start_time' => '09:00:00',
+            'end_time' => '10:00:00',
+            'max_reps_per_range' => 3,
+            'visit_time_type' => 'between',
+            'status' => 'available',
+        ]);
+        $this->assertDatabaseHas('doctor_availabilities', [
+            'date' => 'tuesday',
+            'start_time' => '11:00:00',
+            'end_time' => '12:00:00',
+            'visit_time_type' => 'after',
+            'status' => 'available',
+        ]);
+
+        $editProfileResponse = $this
+            ->withToken($registerResponse->json('data.token'))
+            ->putJson('/api/doctor/edit-profile', [
+                'address_1' => 'Updated Onboarding Clinic',
+            ]);
+
+        $editProfileResponse->assertStatus(200);
+        $editProfileResponse->assertJsonPath('data.address_1', 'Updated Onboarding Clinic');
+        $editProfileResponse->assertJsonCount(2, 'data.available_times');
+    }
+
+    public function test_google_register_rejects_overlapping_availability_without_creating_doctor(): void
+    {
+        $this->fakeGooglePayload([
+            'sub' => 'google-doctor-9',
+            'email' => 'overlap-google-doctor@example.com',
+            'email_verified' => true,
+            'name' => 'Overlap Google Doctor',
+        ]);
+
+        $response = $this->postJson('/api/doctor/google-register', [
+            'id_token' => 'valid-google-token',
+            'available_times' => [
+                [
+                    'date' => 'monday',
+                    'start_time' => '09:00 AM',
+                    'end_time' => '11:00 AM',
+                ],
+                [
+                    'date' => 'monday',
+                    'start_time' => '10:00 AM',
+                    'end_time' => '12:00 PM',
+                ],
+            ],
+        ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonPath('message', 'This time conflicts with an existing availability');
+        $this->assertDatabaseMissing('doctors', [
+            'email' => 'overlap-google-doctor@example.com',
+        ]);
+        $this->assertDatabaseCount('doctor_availabilities', 0);
+    }
+
     public function test_google_auth_rejects_invalid_or_unverified_google_token(): void
     {
         $this->fakeGooglePayload(null);
@@ -246,6 +349,10 @@ class DoctorGoogleAuthTest extends TestCase
     {
         foreach ([
             'personal_access_tokens',
+            'doctor_availabilities',
+            'doctor_representative_favorite',
+            'appointments',
+            'representatives',
             'doctors',
             'specialties',
         ] as $table) {
@@ -274,6 +381,49 @@ class DoctorGoogleAuthTest extends TestCase
             $table->date('from_date')->nullable();
             $table->date('to_date')->nullable();
             $table->text('fcm_token')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('representatives', function (Blueprint $table) {
+            $table->id();
+            $table->string('name');
+            $table->string('email')->unique();
+            $table->string('phone')->nullable();
+            $table->string('password');
+            $table->timestamps();
+        });
+
+        Schema::create('doctor_representative_favorite', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('doctors_id');
+            $table->unsignedBigInteger('representative_id');
+            $table->boolean('is_fav')->default(false);
+            $table->timestamps();
+        });
+
+        Schema::create('appointments', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('doctors_id');
+            $table->unsignedBigInteger('representative_id')->nullable();
+            $table->unsignedBigInteger('company_id')->nullable();
+            $table->unsignedBigInteger('doctor_availability_id')->nullable();
+            $table->time('start_time')->nullable();
+            $table->time('end_time')->nullable();
+            $table->date('date')->nullable();
+            $table->string('status')->default('pending');
+            $table->timestamps();
+        });
+
+        Schema::create('doctor_availabilities', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('doctors_id');
+            $table->string('date');
+            $table->time('start_time');
+            $table->time('end_time');
+            $table->boolean('ends_next_day')->default(false);
+            $table->unsignedInteger('max_reps_per_range')->nullable()->default(null);
+            $table->enum('visit_time_type', ['before', 'after', 'between'])->nullable()->default('between');
+            $table->enum('status', ['available', 'canceled', 'booked', 'busy'])->default('available');
             $table->timestamps();
         });
 

@@ -6,16 +6,14 @@ use App\Helpers\ApiResponse;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\DoctorLoginRequest;
 use App\Http\Requests\DoctorsRequest;
-use App\Models\DoctorAvailability;
 use App\Models\Doctors;
-use App\Models\Specialty;
-use App\Services\FirebaseService;
+use App\Services\DoctorAvailabilityCreationService;
 use App\Services\GoogleIdTokenVerifier;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
-use Illuminate\Validation\Rules\Password;
 use Illuminate\Support\Facades\Validator;
 
 class AuthDoctorsController extends Controller
@@ -113,7 +111,11 @@ class AuthDoctorsController extends Controller
         return ApiResponse::sendResponse(200, 'Doctor login successfully', $this->doctorTokenPayload($doctor));
     }
 
-    public function googleRegister(Request $request, GoogleIdTokenVerifier $googleVerifier)
+    public function googleRegister(
+        Request $request,
+        GoogleIdTokenVerifier $googleVerifier,
+        DoctorAvailabilityCreationService $availabilityCreation
+    )
     {
         $validator = Validator::make($request->all(), [
             'id_token' => ['required', 'string'],
@@ -121,12 +123,21 @@ class AuthDoctorsController extends Controller
             'address_1' => ['nullable', 'string', 'max:255'],
             'specialty_id' => ['nullable', 'exists:specialties,id'],
             'fcm_token' => ['nullable', 'string'],
+            'available_times' => ['sometimes', 'array'],
+            'available_times.*' => ['array'],
+            'available_times.*.date' => ['required_with:available_times'],
+            'available_times.*.start_time' => ['required_with:available_times', 'string'],
+            'available_times.*.end_time' => ['required_with:available_times', 'string'],
+            'available_times.*.ends_next_day' => ['nullable', 'boolean'],
+            'available_times.*.max_reps_per_range' => ['nullable', 'integer', 'min:1'],
+            'available_times.*.visit_time_type' => ['sometimes', 'required', 'string', 'in:before,after,between'],
         ], [], [
             'id_token' => 'Google ID Token',
             'phone' => 'Phone',
             'address_1' => 'Address 1',
             'specialty_id' => 'Specialty',
             'fcm_token' => 'FCM Token',
+            'available_times' => 'Available Times',
         ]);
 
         if ($validator->fails()) {
@@ -145,17 +156,37 @@ class AuthDoctorsController extends Controller
             return ApiResponse::sendResponse(409, 'Doctor already exists, please login', []);
         }
 
-        $doctor = Doctors::create([
-            'name' => $googlePayload['name'] ?? $email,
-            'email' => $email,
-            'google_id' => $googleId,
-            'google_avatar' => $googlePayload['picture'] ?? null,
-            'phone' => $this->normalizeOptionalPhone($request->input('phone')),
-            'password' => Hash::make(Str::random(40)),
-            'address_1' => $this->normalizeOptionalString($request->input('address_1')),
-            'specialty_id' => $request->input('specialty_id'),
-            'fcm_token' => $request->input('fcm_token'),
-        ]);
+        try {
+            $doctor = DB::transaction(function () use ($request, $googlePayload, $email, $googleId, $availabilityCreation) {
+                $doctor = Doctors::create([
+                    'name' => $googlePayload['name'] ?? $email,
+                    'email' => $email,
+                    'google_id' => $googleId,
+                    'google_avatar' => $googlePayload['picture'] ?? null,
+                    'phone' => $this->normalizeOptionalPhone($request->input('phone')),
+                    'password' => Hash::make(Str::random(40)),
+                    'address_1' => $this->normalizeOptionalString($request->input('address_1')),
+                    'specialty_id' => $request->input('specialty_id'),
+                    'fcm_token' => $request->input('fcm_token'),
+                ]);
+
+                $preparedAvailabilities = $availabilityCreation->prepareAvailabilityPayloads(
+                    $doctor,
+                    (array) $request->input('available_times', [])
+                );
+                if (isset($preparedAvailabilities['error'])) {
+                    throw new \InvalidArgumentException($preparedAvailabilities['error']);
+                }
+
+                foreach ($preparedAvailabilities['payloads'] as $availabilityPayload) {
+                    $availabilityCreation->createAvailabilityRows($doctor, $availabilityPayload);
+                }
+
+                return $doctor;
+            });
+        } catch (\InvalidArgumentException $exception) {
+            return ApiResponse::sendResponse(422, $exception->getMessage(), []);
+        }
 
         return ApiResponse::sendResponse(201, 'Doctor Created Successfully', $this->doctorTokenPayload($doctor));
     }
