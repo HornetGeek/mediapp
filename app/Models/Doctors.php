@@ -4,7 +4,6 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
-use Illuminate\Database\Eloquent\Model;
 use Laravel\Sanctum\HasApiTokens;
 
 class Doctors extends Authenticatable
@@ -96,6 +95,40 @@ class Doctors extends Authenticatable
         }
 
         return $query;
+    }
+
+    public function scopeCompleteProfile($query)
+    {
+        return $query
+            ->whereNotNull('phone')
+            ->where('phone', '!=', '')
+            ->whereNotNull('address_1')
+            ->where('address_1', '!=', '')
+            ->whereNotNull('specialty_id');
+    }
+
+    public function missingProfileFields(): array
+    {
+        $missingFields = [];
+
+        if (trim((string) $this->phone) === '') {
+            $missingFields[] = 'phone';
+        }
+
+        if (trim((string) $this->address_1) === '') {
+            $missingFields[] = 'address_1';
+        }
+
+        if ($this->specialty_id === null) {
+            $missingFields[] = 'specialty_id';
+        }
+
+        return $missingFields;
+    }
+
+    public function hasCompleteProfile(): bool
+    {
+        return empty($this->missingProfileFields());
     }
 
     public function scopeFavoriteFilter($query, $searchTerm)

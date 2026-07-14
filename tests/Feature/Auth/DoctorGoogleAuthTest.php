@@ -2,12 +2,15 @@
 
 namespace Tests\Feature\Auth;
 
+use App\Models\DoctorAvailability;
 use App\Models\Doctors;
+use App\Models\Representative;
 use App\Models\Specialty;
 use App\Services\GoogleIdTokenVerifier;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
 class DoctorGoogleAuthTest extends TestCase
@@ -89,7 +92,7 @@ class DoctorGoogleAuthTest extends TestCase
         $this->assertSame('google-doctor-2', $doctor->google_id);
     }
 
-    public function test_google_auth_for_unknown_doctor_requires_profile_completion(): void
+    public function test_google_auth_auto_registers_unknown_doctor_and_requires_profile_completion(): void
     {
         $this->fakeGooglePayload([
             'sub' => 'google-doctor-3',
@@ -104,10 +107,17 @@ class DoctorGoogleAuthTest extends TestCase
         ]);
 
         $response->assertStatus(200);
+        $response->assertJsonPath('message', 'Doctor login successfully');
+        $response->assertJsonPath('data.name', 'New Doctor');
+        $response->assertJsonPath('data.email', 'new-doctor@example.com');
         $response->assertJsonPath('data.profile_required', true);
-        $response->assertJsonPath('data.google_user.email', 'new-doctor@example.com');
-        $response->assertJsonPath('data.google_user.name', 'New Doctor');
-        $this->assertDatabaseCount('doctors', 0);
+        $this->assertSame(['phone', 'address_1', 'specialty_id'], $response->json('data.missing_fields'));
+        $this->assertNotEmpty($response->json('data.token'));
+        $this->assertDatabaseHas('doctors', [
+            'name' => 'New Doctor',
+            'email' => 'new-doctor@example.com',
+            'google_id' => 'google-doctor-3',
+        ]);
     }
 
     public function test_google_register_creates_doctor_and_returns_token(): void
@@ -164,6 +174,8 @@ class DoctorGoogleAuthTest extends TestCase
         $response->assertStatus(201);
         $response->assertJsonPath('data.name', 'Optional Fields Doctor');
         $response->assertJsonPath('data.email', 'optional-fields-doctor@example.com');
+        $response->assertJsonPath('data.profile_required', true);
+        $this->assertSame(['phone', 'address_1', 'specialty_id'], $response->json('data.missing_fields'));
         $this->assertNotEmpty($response->json('data.token'));
 
         $this->assertDatabaseHas('doctors', [
@@ -190,11 +202,13 @@ class DoctorGoogleAuthTest extends TestCase
 
         $authResponse->assertStatus(200);
         $authResponse->assertJsonPath('data.profile_required', true);
-        $this->assertNull($authResponse->json('data.token'));
+        $this->assertNotEmpty($authResponse->json('data.token'));
 
         $registerResponse = $this->postJson('/api/doctor/google-register', [
             'id_token' => 'valid-google-token',
             'address_1' => 'Onboarding Clinic',
+            'phone' => '010 0000 0008',
+            'specialty_id' => Specialty::create(['name' => 'Oncology', 'slug' => 'oncology'])->id,
             'available_times' => [
                 [
                     'date' => 'monday',
@@ -212,11 +226,13 @@ class DoctorGoogleAuthTest extends TestCase
             ],
         ]);
 
-        $registerResponse->assertStatus(201);
+        $registerResponse->assertStatus(200);
+        $registerResponse->assertJsonPath('data.profile_required', false);
         $this->assertNotEmpty($registerResponse->json('data.token'));
         $this->assertDatabaseHas('doctors', [
             'email' => 'availability-google-doctor@example.com',
             'address_1' => 'Onboarding Clinic',
+            'phone' => '01000000008',
         ]);
         $this->assertDatabaseHas('doctor_availabilities', [
             'date' => 'monday',
@@ -243,6 +259,61 @@ class DoctorGoogleAuthTest extends TestCase
         $editProfileResponse->assertStatus(200);
         $editProfileResponse->assertJsonPath('data.address_1', 'Updated Onboarding Clinic');
         $editProfileResponse->assertJsonCount(2, 'data.available_times');
+    }
+
+    public function test_incomplete_auto_registered_google_doctor_is_hidden_from_representative_discovery(): void
+    {
+        $specialty = Specialty::create(['name' => 'Dermatology', 'slug' => 'dermatology']);
+        $completeDoctor = Doctors::create([
+            'name' => 'Complete Doctor',
+            'email' => 'complete-doctor@example.com',
+            'phone' => '01000000010',
+            'password' => 'secret123',
+            'address_1' => 'Complete Clinic',
+            'specialty_id' => $specialty->id,
+            'status' => 'active',
+        ]);
+        DoctorAvailability::create([
+            'doctors_id' => $completeDoctor->id,
+            'date' => 'monday',
+            'start_time' => '09:00:00',
+            'end_time' => '10:00:00',
+            'status' => 'available',
+        ]);
+
+        $this->fakeGooglePayload([
+            'sub' => 'google-doctor-hidden',
+            'email' => 'hidden-google-doctor@example.com',
+            'email_verified' => true,
+            'name' => 'Hidden Google Doctor',
+        ]);
+
+        $googleResponse = $this->postJson('/api/doctor/google-auth', [
+            'id_token' => 'valid-google-token',
+        ]);
+        $googleResponse->assertStatus(200);
+        $googleResponse->assertJsonPath('data.profile_required', true);
+
+        $representative = Representative::create([
+            'name' => 'Discovery Rep',
+            'email' => 'discovery-rep@example.com',
+            'phone' => '01111111111',
+            'password' => 'secret123',
+        ]);
+        Sanctum::actingAs($representative, ['representative']);
+
+        $listResponse = $this->getJson('/api/reps/doctors/all');
+        $listResponse->assertStatus(200);
+        $listResponse->assertJsonCount(1, 'data');
+        $listResponse->assertJsonPath('data.0.email', 'complete-doctor@example.com');
+
+        $searchResponse = $this->getJson('/api/reps/doctors/search?name=Hidden');
+        $searchResponse->assertStatus(404);
+        $searchResponse->assertJsonPath('message', 'No doctors found');
+
+        $profileResponse = $this->getJson('/api/reps/docotr/' . Doctors::where('email', 'hidden-google-doctor@example.com')->value('id'));
+        $profileResponse->assertStatus(404);
+        $profileResponse->assertJsonPath('message', 'Doctor not found');
     }
 
     public function test_google_register_rejects_overlapping_availability_without_creating_doctor(): void
@@ -303,11 +374,12 @@ class DoctorGoogleAuthTest extends TestCase
         $unverifiedResponse->assertJsonPath('message', 'Invalid Google token');
     }
 
-    public function test_google_register_rejects_existing_doctor(): void
+    public function test_google_register_rejects_doctor_linked_to_different_google_account(): void
     {
         Doctors::create([
             'name' => 'Existing Doctor',
             'email' => 'existing-doctor@example.com',
+            'google_id' => 'different-google-doctor',
             'phone' => '01000000006',
             'password' => 'secret123',
             'status' => 'active',
@@ -327,7 +399,7 @@ class DoctorGoogleAuthTest extends TestCase
         ]);
 
         $response->assertStatus(409);
-        $response->assertJsonPath('message', 'Doctor already exists, please login');
+        $response->assertJsonPath('message', 'Google account is already linked to another doctor account');
         $this->assertDatabaseCount('personal_access_tokens', 0);
     }
 
@@ -350,6 +422,7 @@ class DoctorGoogleAuthTest extends TestCase
         foreach ([
             'personal_access_tokens',
             'doctor_availabilities',
+            'doctor_blocks',
             'doctor_representative_favorite',
             'appointments',
             'representatives',
@@ -398,6 +471,14 @@ class DoctorGoogleAuthTest extends TestCase
             $table->unsignedBigInteger('doctors_id');
             $table->unsignedBigInteger('representative_id');
             $table->boolean('is_fav')->default(false);
+            $table->timestamps();
+        });
+
+        Schema::create('doctor_blocks', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('doctors_id');
+            $table->unsignedBigInteger('blockable_id');
+            $table->string('blockable_type');
             $table->timestamps();
         });
 

@@ -51,21 +51,7 @@ class DoctorProfileCompletionReminderService
      */
     public function missingProfileFields(Doctors $doctor): array
     {
-        $missingFields = [];
-
-        if (trim((string) $doctor->phone) === '') {
-            $missingFields[] = 'phone';
-        }
-
-        if (trim((string) $doctor->address_1) === '') {
-            $missingFields[] = 'address_1';
-        }
-
-        if ($doctor->specialty_id === null) {
-            $missingFields[] = 'specialty_id';
-        }
-
-        return $missingFields;
+        return $doctor->missingProfileFields();
     }
 
     /**

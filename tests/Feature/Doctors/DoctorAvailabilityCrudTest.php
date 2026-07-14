@@ -1485,7 +1485,7 @@ class DoctorAvailabilityCrudTest extends TestCase
         $response->assertJsonPath('message', 'This time conflicts with an existing availability');
 
         $doctor->refresh();
-        $this->assertNull($doctor->address_1);
+        $this->assertSame('Clinic 1242', $doctor->address_1);
         $this->assertDatabaseMissing('doctor_availabilities', [
             'doctors_id' => $doctor->id,
             'date' => 'monday',
@@ -2479,6 +2479,7 @@ class DoctorAvailabilityCrudTest extends TestCase
             'email' => $email,
             'phone' => $phone,
             'password' => 'secret123',
+            'address_1' => 'Clinic ' . substr($phone, -4),
             'specialty_id' => $specialty->id,
             'status' => 'active',
         ]);

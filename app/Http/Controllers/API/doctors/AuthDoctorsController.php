@@ -96,17 +96,19 @@ class AuthDoctorsController extends Controller
             ?: Doctors::where('email', $email)->first();
 
         if (!$doctor) {
-            return ApiResponse::sendResponse(200, 'Doctor profile completion required', [
-                'profile_required' => true,
-                'google_user' => $this->googleUserPayload($googlePayload),
+            $doctor = Doctors::create([
+                'name' => $googlePayload['name'] ?? $email,
+                'email' => $email,
+                'google_id' => $googleId,
+                'google_avatar' => $googlePayload['picture'] ?? null,
+                'password' => Hash::make(Str::random(40)),
+                'fcm_token' => $request->input('fcm_token'),
             ]);
-        }
-
-        if (!empty($doctor->google_id) && $doctor->google_id !== $googleId) {
+        } elseif (!empty($doctor->google_id) && $doctor->google_id !== $googleId) {
             return ApiResponse::sendResponse(409, 'Google account is already linked to another doctor account', []);
+        } else {
+            $this->linkGoogleDoctor($doctor, $googlePayload, $request->input('fcm_token'));
         }
-
-        $this->linkGoogleDoctor($doctor, $googlePayload, $request->input('fcm_token'));
 
         return ApiResponse::sendResponse(200, 'Doctor login successfully', $this->doctorTokenPayload($doctor));
     }
@@ -152,23 +154,56 @@ class AuthDoctorsController extends Controller
         $googleId = (string) $googlePayload['sub'];
         $email = strtolower((string) $googlePayload['email']);
 
-        if (Doctors::where('google_id', $googleId)->orWhere('email', $email)->exists()) {
-            return ApiResponse::sendResponse(409, 'Doctor already exists, please login', []);
+        $existingDoctor = Doctors::where('google_id', $googleId)->first()
+            ?: Doctors::where('email', $email)->first();
+
+        if ($existingDoctor && !empty($existingDoctor->google_id) && $existingDoctor->google_id !== $googleId) {
+            return ApiResponse::sendResponse(409, 'Google account is already linked to another doctor account', []);
         }
 
         try {
-            $doctor = DB::transaction(function () use ($request, $googlePayload, $email, $googleId, $availabilityCreation) {
-                $doctor = Doctors::create([
+            $doctor = DB::transaction(function () use (
+                $request,
+                $googlePayload,
+                $email,
+                $googleId,
+                $availabilityCreation,
+                $existingDoctor
+            ) {
+                $doctor = $existingDoctor ?: new Doctors([
                     'name' => $googlePayload['name'] ?? $email,
                     'email' => $email,
-                    'google_id' => $googleId,
-                    'google_avatar' => $googlePayload['picture'] ?? null,
-                    'phone' => $this->normalizeOptionalPhone($request->input('phone')),
                     'password' => Hash::make(Str::random(40)),
-                    'address_1' => $this->normalizeOptionalString($request->input('address_1')),
-                    'specialty_id' => $request->input('specialty_id'),
-                    'fcm_token' => $request->input('fcm_token'),
                 ]);
+
+                $doctor->google_id = $googleId;
+                $doctor->google_avatar = $googlePayload['picture'] ?? $doctor->google_avatar;
+                if (!$doctor->exists || trim((string) $doctor->name) === '') {
+                    $doctor->name = $googlePayload['name'] ?? $email;
+                }
+                if (!$doctor->exists || trim((string) $doctor->email) === '') {
+                    $doctor->email = $email;
+                }
+
+                $normalizedPhone = $this->normalizeOptionalPhone($request->input('phone'));
+                if ($normalizedPhone !== null) {
+                    $doctor->phone = $normalizedPhone;
+                }
+
+                $normalizedAddress = $this->normalizeOptionalString($request->input('address_1'));
+                if ($normalizedAddress !== null) {
+                    $doctor->address_1 = $normalizedAddress;
+                }
+
+                if ($request->filled('specialty_id')) {
+                    $doctor->specialty_id = $request->input('specialty_id');
+                }
+
+                if ($request->filled('fcm_token')) {
+                    $doctor->fcm_token = $request->input('fcm_token');
+                }
+
+                $doctor->save();
 
                 $preparedAvailabilities = $availabilityCreation->prepareAvailabilityPayloads(
                     $doctor,
@@ -188,7 +223,10 @@ class AuthDoctorsController extends Controller
             return ApiResponse::sendResponse(422, $exception->getMessage(), []);
         }
 
-        return ApiResponse::sendResponse(201, 'Doctor Created Successfully', $this->doctorTokenPayload($doctor));
+        $statusCode = $existingDoctor ? 200 : 201;
+        $message = $existingDoctor ? 'Doctor profile updated successfully' : 'Doctor Created Successfully';
+
+        return ApiResponse::sendResponse($statusCode, $message, $this->doctorTokenPayload($doctor));
     }
 
 
@@ -241,11 +279,15 @@ class AuthDoctorsController extends Controller
 
     private function doctorTokenPayload(Doctors $doctor): array
     {
+        $missingFields = $doctor->missingProfileFields();
+
         return [
             'token' => $doctor->createToken('doctor-token', ['doctor'])->plainTextToken,
             'name' => $doctor->name,
             'email' => $doctor->email,
             'fcm_token' => $doctor->fcm_token,
+            'profile_required' => !empty($missingFields),
+            'missing_fields' => $missingFields,
         ];
     }
 
