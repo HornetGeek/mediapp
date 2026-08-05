@@ -15,13 +15,21 @@ class ListDoctorsResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
+        $missingFields = method_exists($this->resource, 'missingProfileFields')
+            ? $this->missingProfileFields()
+            : [];
+
         return [
             'id' => $this->id,
             'name' => $this->name,
             'email' => $this->email,
             'phone' => $this->phone,
-            'specialty' => $this->specialty->name,
+            'specialty_id' => $this->specialty_id,
+            'specialty' => $this->specialty->name ?? null,
             'address_1' => $this->address_1,
+            'google_avatar' => $this->google_avatar,
+            'profile_required' => !empty($missingFields),
+            'missing_fields' => $missingFields,
             'available_times' => AvailableTimeResource::collection(
                 $this->availableTimes
                     ->sortBy(function ($availability) {
