@@ -36,7 +36,7 @@
                                         @foreach ($specialties as $specialty)
                                             <option value="{{ $specialty->id }}"
                                                 {{ $doctor->specialty->id == $specialty->id ? 'selected' : '' }}>
-                                                {{ $doctor->specialty->name }}</option>
+                                                {{ $specialty->name }}</option>
                                         @endforeach
                                     @else
                                         @foreach ($specialties as $specialty)

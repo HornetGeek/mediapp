@@ -50,6 +50,8 @@
                                                 <th>Email</th>
                                                 <th>Phone</th>
                                                 <th>Specialty</th>
+                                                <th>Address</th>
+                                                <th>Profile</th>
                                                 <th>Actions</th>
                                             </tr>
                                         </thead>
@@ -76,8 +78,19 @@
                                                             </div>
                                                         </td>
                                                         <td>{{$doctor->email}}</td>
-                                                        <td>{{$doctor->phone}}</td>
+                                                        <td>{{$doctor->phone ?: '---'}}</td>
                                                         <td>{{$doctor->specialty->name ?? '---'}}</td>
+                                                        <td>{{$doctor->address_1 ?: '---'}}</td>
+                                                        <td>
+                                                            @php($missingFields = $doctor->missingProfileFields())
+                                                            @if (empty($missingFields))
+                                                                <span class="badge bg-success">Complete</span>
+                                                            @else
+                                                                <span class="badge bg-warning text-dark">
+                                                                    Incomplete: {{ implode(', ', $missingFields) }}
+                                                                </span>
+                                                            @endif
+                                                        </td>
                                                         <td>
                                                             <ul class="list-inline me-auto mb-0">
                                                                 <li class="list-inline-item align-bottom"

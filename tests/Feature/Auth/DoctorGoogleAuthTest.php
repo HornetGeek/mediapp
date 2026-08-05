@@ -6,6 +6,7 @@ use App\Models\DoctorAvailability;
 use App\Models\Doctors;
 use App\Models\Representative;
 use App\Models\Specialty;
+use App\Http\Resources\ListDoctorsResource;
 use App\Services\GoogleIdTokenVerifier;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
@@ -118,6 +119,29 @@ class DoctorGoogleAuthTest extends TestCase
             'email' => 'new-doctor@example.com',
             'google_id' => 'google-doctor-3',
         ]);
+    }
+
+    public function test_super_admin_doctor_resource_handles_incomplete_google_doctor(): void
+    {
+        $doctor = Doctors::create([
+            'name' => 'Incomplete Google Doctor',
+            'email' => 'incomplete-google-doctor@example.com',
+            'google_id' => 'google-doctor-incomplete',
+            'google_avatar' => 'https://example.com/avatar.png',
+            'password' => 'secret123',
+            'status' => 'active',
+        ]);
+
+        $payload = (new ListDoctorsResource($doctor->load(['specialty', 'availableTimes'])))->resolve();
+
+        $this->assertSame('Incomplete Google Doctor', $payload['name']);
+        $this->assertNull($payload['phone']);
+        $this->assertNull($payload['specialty']);
+        $this->assertNull($payload['specialty_id']);
+        $this->assertNull($payload['address_1']);
+        $this->assertSame('https://example.com/avatar.png', $payload['google_avatar']);
+        $this->assertTrue($payload['profile_required']);
+        $this->assertSame(['phone', 'address_1', 'specialty_id'], $payload['missing_fields']);
     }
 
     public function test_google_register_creates_doctor_and_returns_token(): void
