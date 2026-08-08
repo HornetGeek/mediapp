@@ -55,9 +55,9 @@
                         </a>
                     </li>
                     <li class="pc-item">
-                        <a href="{{ route('visits.index') }}" class="pc-link">
-                            <span class="pc-micon"><i class="ti ti-hierarchy-2"></i></span>
-                            <span class="pc-mtext">Visitis</span>
+                        <a href="{{ route('appointments.index') }}" class="pc-link">
+                            <span class="pc-micon"><i class="ti ti-calendar-event"></i></span>
+                            <span class="pc-mtext">Appointments</span>
                         </a>
                     </li>
                     <li class="pc-item">

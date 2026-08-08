@@ -8,7 +8,7 @@ use App\Models\AppVersion;
 use App\Models\Company;
 use App\Models\Doctors;
 use App\Models\FeedbackEmail;
-use App\Models\User;
+use App\Services\AppointmentAnalyticsService;
 use App\Services\AppVersionRemoteConfigService;
 use Illuminate\Http\Request;
 
@@ -16,11 +16,22 @@ class SuperadminController extends Controller
 {
     //
 
-    public function index(AppVersionRemoteConfigService $remoteConfigService)
-    {
-        $confirmedVisits = Appointment::where('status', 'confirmed')->count();
-        // $pendingVisits = Appointment::where('status', 'pending')->count();
-        $cancelledVisits = Appointment::where('status', 'cancelled')->count();
+    public function index(
+        AppVersionRemoteConfigService $remoteConfigService,
+        AppointmentAnalyticsService $appointmentAnalytics
+    ) {
+        $appointmentSummary = $appointmentAnalytics->summary(Appointment::query());
+        $appointmentTrend = $appointmentAnalytics->dailyTrend(Appointment::query());
+        $latestAppointments = Appointment::with([
+            'doctor.specialty',
+            'representative',
+            'company',
+            'companyCatalog',
+        ])
+            ->orderByDesc('date')
+            ->orderByDesc('start_time')
+            ->limit(8)
+            ->get();
         $totalDoctors = Doctors::count();
         $totalCompanies = Company::count();
         $feedback_email = FeedbackEmail::first();
@@ -44,15 +55,16 @@ class SuperadminController extends Controller
         $data = [
             'total_doctors' => $totalDoctors,
             'total_companies' => $totalCompanies,
-            // 'pending_visits' => $pendingVisits,
-            'confirmed_visits' => $confirmedVisits,
-            'cancelled_visits' => $cancelledVisits,
+            'confirmed_visits' => $appointmentSummary['status_counts']['confirmed'],
+            'cancelled_visits' => $appointmentSummary['status_counts']['cancelled'],
+            'appointment_summary' => $appointmentSummary,
+            'appointment_trend' => $appointmentTrend,
             'feedback_email' => $feedback_email ? $feedback_email->email_feedback : null,
             'versions' => $versions,
             'forced' => $forced,
         ];
 
-        return view('dashboard.super_admin.index', compact('data'));
+        return view('dashboard.super_admin.index', compact('data', 'latestAppointments'));
     }
 
     public function storeEmailFedback(Request $request)
@@ -62,12 +74,12 @@ class SuperadminController extends Controller
         ]);
         if (FeedbackEmail::first()) {
             FeedbackEmail::where('id', 1)->update(['email_feedback' => $request->email_feedback]);
+
             return redirect()->back()->with('success', 'Update email feedback successfully!');
         }
         FeedbackEmail::create(
             ['email_feedback' => $request->email_feedback]
         );
-
 
         return redirect()->back()->with('success', 'Save email feedback successfully!');
     }
@@ -118,7 +130,7 @@ class SuperadminController extends Controller
             }
         }
 
-        if (!$remoteConfigPublished) {
+        if (! $remoteConfigPublished) {
             return redirect()->back()->with('error', 'App versions saved locally, but Firebase Remote Config was not updated.');
         }
 
