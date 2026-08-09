@@ -28,8 +28,8 @@ class SuperadminController extends Controller
             'company',
             'companyCatalog',
         ])
-            ->orderByDesc('date')
-            ->orderByDesc('start_time')
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
             ->limit(8)
             ->get();
         $totalDoctors = Doctors::count();

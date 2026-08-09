@@ -13,6 +13,13 @@ use Maatwebsite\Excel\Facades\Excel;
 
 class AppointmentsController extends Controller
 {
+    private const SORT_OPTIONS = [
+        'created_desc' => 'Newest created',
+        'created_asc' => 'Oldest created',
+        'appointment_desc' => 'Latest scheduled date',
+        'appointment_asc' => 'Earliest scheduled date',
+    ];
+
     public function index(Request $request, AppointmentAnalyticsService $analytics)
     {
         $filters = $this->validatedFilters($request);
@@ -22,17 +29,14 @@ class AppointmentsController extends Controller
         $trend = $analytics->dailyTrend(clone $query, $filters['from_date'] ?? null, $filters['to_date'] ?? null);
         $topDoctors = $analytics->topDoctors(clone $query);
         $topCompanies = $analytics->topCompanies(clone $query);
-        $appointments = (clone $query)
+        $appointments = $this->applySort((clone $query)
             ->with([
                 'doctor.specialty',
                 'representative.company',
                 'representative.companyCatalog',
                 'company',
                 'companyCatalog',
-            ])
-            ->orderByDesc('date')
-            ->orderByDesc('start_time')
-            ->orderByDesc('id')
+            ]), $filters['sort'])
             ->paginate(20)
             ->withQueryString();
 
@@ -44,22 +48,21 @@ class AppointmentsController extends Controller
             'topCompanies' => $topCompanies,
             'filters' => $filters,
             'statuses' => AppointmentAnalyticsService::STATUSES,
+            'sortOptions' => self::SORT_OPTIONS,
         ]);
     }
 
     public function export(Request $request)
     {
         $filters = $this->validatedFilters($request);
-        $appointments = $this->filteredQuery($filters)
+        $appointments = $this->applySort($this->filteredQuery($filters)
             ->with([
                 'doctor.specialty',
                 'representative.company',
                 'representative.companyCatalog',
                 'company',
                 'companyCatalog',
-            ])
-            ->orderByDesc('date')
-            ->orderByDesc('start_time')
+            ]), $filters['sort'])
             ->get();
 
         return Excel::download(
@@ -71,12 +74,17 @@ class AppointmentsController extends Controller
 
     private function validatedFilters(Request $request): array
     {
-        return $request->validate([
+        $filters = $request->validate([
             'search' => ['nullable', 'string', 'max:100'],
             'status' => ['nullable', Rule::in(array_keys(AppointmentAnalyticsService::STATUSES))],
             'from_date' => ['nullable', 'date'],
             'to_date' => ['nullable', 'date', 'after_or_equal:from_date'],
+            'sort' => ['nullable', Rule::in(array_keys(self::SORT_OPTIONS))],
         ]);
+
+        $filters['sort'] ??= 'created_desc';
+
+        return $filters;
     }
 
     private function filteredQuery(array $filters): Builder
@@ -105,5 +113,15 @@ class AppointmentsController extends Controller
         }
 
         return $query;
+    }
+
+    private function applySort(Builder $query, string $sort): Builder
+    {
+        return match ($sort) {
+            'created_asc' => $query->orderBy('created_at')->orderBy('id'),
+            'appointment_desc' => $query->orderByDesc('date')->orderByDesc('start_time')->orderByDesc('id'),
+            'appointment_asc' => $query->orderBy('date')->orderBy('start_time')->orderBy('id'),
+            default => $query->orderByDesc('created_at')->orderByDesc('id'),
+        };
     }
 }

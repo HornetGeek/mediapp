@@ -137,13 +137,13 @@
 
     <div class="card mb-4">
         <div class="card-header d-flex justify-content-between align-items-center">
-            <div><h5 class="mb-1">Latest appointments</h5><small class="text-muted">Most recent scheduled appointments across the platform</small></div>
+            <div><h5 class="mb-1">Latest appointments</h5><small class="text-muted">Newest bookings by creation time across the platform</small></div>
             <a href="{{ route('appointments.index') }}" class="btn btn-sm btn-primary">View all</a>
         </div>
         <div class="card-body p-0">
             <div class="table-responsive">
                 <table class="table table-hover align-middle mb-0">
-                    <thead class="table-light"><tr><th class="ps-4">ID</th><th>Doctor</th><th>Representative</th><th>Company</th><th>Date & time</th><th class="pe-4">Status</th></tr></thead>
+                    <thead class="table-light"><tr><th class="ps-4">ID</th><th>Doctor</th><th>Representative</th><th>Company</th><th>Date & time</th><th>Created</th><th class="pe-4">Status</th></tr></thead>
                     <tbody>
                         @forelse ($latestAppointments as $appointment)
                             @php
@@ -155,10 +155,11 @@
                                 <td>{{ $appointment->representative?->name ?? 'Deleted representative' }}</td>
                                 <td>{{ $appointment->company?->name ?? $appointment->companyCatalog?->name ?? '—' }}</td>
                                 <td class="text-nowrap">{{ $appointment->date?->format('M d, Y') ?? '—' }}<small class="d-block text-muted">{{ $appointment->start_time?->format('h:i A') ?? '—' }}</small></td>
+                                <td class="text-nowrap">{{ $appointment->created_at?->format('M d, Y') ?? '—' }}<small class="d-block text-muted">{{ $appointment->created_at?->format('h:i A') ?? '—' }}</small></td>
                                 <td class="pe-4"><span class="badge bg-light-{{ $badge }} text-{{ $badge }} text-capitalize">{{ $appointment->status ?? 'Unknown' }}</span></td>
                             </tr>
                         @empty
-                            <tr><td colspan="6" class="text-center text-muted py-5">No appointments have been created yet.</td></tr>
+                            <tr><td colspan="7" class="text-center text-muted py-5">No appointments have been created yet.</td></tr>
                         @endforelse
                     </tbody>
                 </table>

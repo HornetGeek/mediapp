@@ -48,7 +48,7 @@
         <div class="card mb-4">
             <div class="card-body">
                 <form method="GET" action="{{ route('appointments.index') }}" class="row g-3 align-items-end">
-                    <div class="col-lg-4 col-md-6">
+                    <div class="col-lg-3 col-md-6">
                         <label for="search" class="form-label">Search</label>
                         <div class="input-group">
                             <span class="input-group-text"><i class="ti ti-search"></i></span>
@@ -57,7 +57,7 @@
                                 placeholder="Code, doctor, representative or company">
                         </div>
                     </div>
-                    <div class="col-lg-2 col-md-6">
+                    <div class="col-lg-3 col-md-6">
                         <label for="status" class="form-label">Status</label>
                         <select class="form-select" id="status" name="status">
                             <option value="">All statuses</option>
@@ -74,8 +74,16 @@
                         <label for="to_date" class="form-label">To date</label>
                         <input type="date" class="form-control" id="to_date" name="to_date" value="{{ $filters['to_date'] ?? '' }}">
                     </div>
-                    <div class="col-lg-2 col-md-2 d-flex gap-2">
-                        <button type="submit" class="btn btn-primary flex-grow-1">Apply</button>
+                    <div class="col-lg-2 col-md-6">
+                        <label for="sort" class="form-label">Sort by</label>
+                        <select class="form-select" id="sort" name="sort">
+                            @foreach ($sortOptions as $value => $label)
+                                <option value="{{ $value }}" @selected($filters['sort'] === $value)>{{ $label }}</option>
+                            @endforeach
+                        </select>
+                    </div>
+                    <div class="col-12 d-flex justify-content-end gap-2">
+                        <button type="submit" class="btn btn-primary">Apply</button>
                         <a href="{{ route('appointments.index') }}" class="btn btn-light-secondary" title="Clear filters">
                             <i class="ti ti-refresh"></i>
                         </a>
@@ -244,7 +252,7 @@
                     <h5 class="mb-1">All appointments</h5>
                     <small class="text-muted">Showing {{ $appointments->firstItem() ?? 0 }}–{{ $appointments->lastItem() ?? 0 }} of {{ number_format($appointments->total()) }}</small>
                 </div>
-                @if (array_filter($filters))
+                @if (array_filter(array_diff_key($filters, ['sort' => true])))
                     <span class="badge bg-light-info text-info">Filtered results</span>
                 @endif
             </div>
@@ -259,7 +267,7 @@
                                 <th>Company</th>
                                 <th>Date & time</th>
                                 <th>Status</th>
-                                <th class="pe-4">Updated</th>
+                                <th class="pe-4">Created</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -301,7 +309,10 @@
                                             <small class="d-block text-muted mt-1" title="Cancelled/changed by">{{ $appointment->cancelled_by }}</small>
                                         @endif
                                     </td>
-                                    <td class="pe-4 text-nowrap"><small class="text-muted">{{ $appointment->updated_at?->diffForHumans() ?? '—' }}</small></td>
+                                    <td class="pe-4 text-nowrap">
+                                        <div class="fw-semibold">{{ $appointment->created_at?->format('M d, Y') ?? '—' }}</div>
+                                        <small class="text-muted">{{ $appointment->created_at?->format('h:i A') ?? '—' }}</small>
+                                    </td>
                                 </tr>
                             @empty
                                 <tr>
