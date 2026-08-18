@@ -59,6 +59,7 @@ class SuperadminController extends Controller
             'cancelled_visits' => $appointmentSummary['status_counts']['cancelled'],
             'appointment_summary' => $appointmentSummary,
             'appointment_trend' => $appointmentTrend,
+            'appointment_statuses' => AppointmentAnalyticsService::STATUSES,
             'feedback_email' => $feedback_email ? $feedback_email->email_feedback : null,
             'versions' => $versions,
             'forced' => $forced,

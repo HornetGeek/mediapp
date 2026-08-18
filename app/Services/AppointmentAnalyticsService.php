@@ -12,9 +12,9 @@ class AppointmentAnalyticsService
 {
     public const STATUSES = [
         'pending' => 'Pending',
-        'confirmed' => 'Confirmed',
+        'confirmed' => 'Completed',
         'cancelled' => 'Cancelled',
-        'suspended' => 'Awaiting confirmation',
+        'suspended' => 'Suspended',
         'left' => 'Left / unconfirmed',
         'deleted' => 'Deleted',
     ];

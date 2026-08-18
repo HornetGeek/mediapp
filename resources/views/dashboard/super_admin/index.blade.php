@@ -52,7 +52,7 @@
         <div class="col-md-6 col-xl-3">
             <div class="card">
                 <div class="card-body">
-                    <h6 class="mb-2 f-w-400 text-muted">Confirmation Rate</h6>
+                    <h6 class="mb-2 f-w-400 text-muted">Completion Rate</h6>
                     <h4 class="mb-3">{{ $data['appointment_summary']['confirmation_rate'] }}%</h4>
                     <small class="text-muted">Of appointments with a final outcome</small>
                 </div>
@@ -74,7 +74,7 @@
         </div>
         <div class="col-sm-6 col-xl-3">
             <div class="card h-100"><div class="card-body d-flex justify-content-between align-items-center">
-                <div><div class="text-muted mb-1">Confirmed Visits</div><h3 class="mb-0">{{ number_format($data['appointment_summary']['status_counts']['confirmed']) }}</h3></div>
+                <div><div class="text-muted mb-1">Completed Visits</div><h3 class="mb-0">{{ number_format($data['appointment_summary']['status_counts']['confirmed']) }}</h3></div>
                 <span class="avtar bg-light-success text-success"><i class="ti ti-circle-check"></i></span>
             </div></div>
         </div>
@@ -112,12 +112,12 @@
                 <div class="card-body">
                     @php
                         $dashboardStatuses = [
-                            'pending' => ['Pending', '#e9a319'],
-                            'confirmed' => ['Confirmed', '#2ca87f'],
-                            'cancelled' => ['Cancelled', '#dc2626'],
-                            'suspended' => ['Awaiting confirmation', '#4680ff'],
-                            'left' => ['Left / unconfirmed', '#6c757d'],
-                            'deleted' => ['Deleted', '#212529'],
+                            'pending' => [$data['appointment_statuses']['pending'], '#e9a319'],
+                            'confirmed' => [$data['appointment_statuses']['confirmed'], '#2ca87f'],
+                            'cancelled' => [$data['appointment_statuses']['cancelled'], '#dc2626'],
+                            'suspended' => [$data['appointment_statuses']['suspended'], '#4680ff'],
+                            'left' => [$data['appointment_statuses']['left'], '#6c757d'],
+                            'deleted' => [$data['appointment_statuses']['deleted'], '#212529'],
                         ];
                     @endphp
                     @foreach ($dashboardStatuses as $status => [$label, $color])
@@ -156,7 +156,7 @@
                                 <td>{{ $appointment->company?->name ?? $appointment->companyCatalog?->name ?? '—' }}</td>
                                 <td class="text-nowrap">{{ $appointment->date?->format('M d, Y') ?? '—' }}<small class="d-block text-muted">{{ $appointment->start_time?->format('h:i A') ?? '—' }}</small></td>
                                 <td class="text-nowrap">{{ $appointment->created_at?->format('M d, Y') ?? '—' }}<small class="d-block text-muted">{{ $appointment->created_at?->format('h:i A') ?? '—' }}</small></td>
-                                <td class="pe-4"><span class="badge bg-light-{{ $badge }} text-{{ $badge }} text-capitalize">{{ $appointment->status ?? 'Unknown' }}</span></td>
+                                <td class="pe-4"><span class="badge bg-light-{{ $badge }} text-{{ $badge }}">{{ $data['appointment_statuses'][$appointment->status] ?? 'Unknown' }}</span></td>
                             </tr>
                         @empty
                             <tr><td colspan="7" class="text-center text-muted py-5">No appointments have been created yet.</td></tr>

@@ -124,7 +124,7 @@
                 <div class="card metric-card h-100">
                     <div class="card-body d-flex align-items-center gap-3">
                         <span class="metric-icon bg-light-success text-success"><i class="ti ti-chart-donut"></i></span>
-                        <div><div class="text-muted">Confirmation rate</div><h3 class="mb-0">{{ $summary['confirmation_rate'] }}%</h3></div>
+                        <div><div class="text-muted">Completion rate</div><h3 class="mb-0">{{ $summary['confirmation_rate'] }}%</h3></div>
                     </div>
                 </div>
             </div>
@@ -132,7 +132,7 @@
                 <div class="card metric-card h-100">
                     <div class="card-body d-flex align-items-center gap-3">
                         <span class="metric-icon bg-light-success text-success"><i class="ti ti-circle-check"></i></span>
-                        <div><div class="text-muted">Confirmed visits</div><h3 class="mb-0">{{ number_format($summary['status_counts']['confirmed']) }}</h3></div>
+                        <div><div class="text-muted">Completed visits</div><h3 class="mb-0">{{ number_format($summary['status_counts']['confirmed']) }}</h3></div>
                     </div>
                 </div>
             </div>
