@@ -18,6 +18,7 @@
             <th>Start Time</th>
             <th>End Time</th>
             <th>Status</th>
+            <th>Created At</th>
         </tr>
     </thead>
     <tbody>
@@ -31,6 +32,7 @@
                 <td>{{ $visit->start_time?->format('h:i A') ?? '-' }}</td>
                 <td>{{ $visit->end_time?->format('h:i A') ?? '-' }}</td>
                 <td>{{ $visit->status }}</td>
+                <td>{{ $visit->created_at?->format('Y-m-d H:i:s') ?? '-' }}</td>
             </tr>
         @endforeach
     </tbody>

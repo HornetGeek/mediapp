@@ -8,11 +8,16 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
-use Illuminate\Support\Str;
 use Tests\TestCase;
 
 class PlatformAppointmentAnalyticsTest extends TestCase
 {
+    private const FIRST_CODE = '00000000-0000-0000-0000-000000000001';
+
+    private const SECOND_CODE = '00000000-0000-0000-0000-000000000002';
+
+    private const THIRD_CODE = '00000000-0000-0000-0000-000000000003';
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -36,7 +41,13 @@ class PlatformAppointmentAnalyticsTest extends TestCase
         $response->assertOk()
             ->assertSee('Appointments &amp; Analytics', false)
             ->assertSee('Total appointments')
-            ->assertSee('Confirmation rate')
+            ->assertSee('Completion rate')
+            ->assertSee('Completed visits')
+            ->assertSee('Completed')
+            ->assertSee('Suspended')
+            ->assertDontSee('Confirmation rate')
+            ->assertDontSee('Confirmed visits')
+            ->assertDontSee('Awaiting confirmation')
             ->assertSee('Top doctors')
             ->assertSee('Alpha Doctor')
             ->assertSee('Beta Doctor')
@@ -57,10 +68,86 @@ class PlatformAppointmentAnalyticsTest extends TestCase
 
         $response->assertOk()
             ->assertSee('Total Appointments')
+            ->assertSee('Completion Rate')
+            ->assertSee('Completed Visits')
             ->assertSee('Appointments over the last 30 days')
             ->assertSee('Status overview')
+            ->assertSee('Completed')
+            ->assertSee('Suspended')
+            ->assertDontSee('Confirmation Rate')
+            ->assertDontSee('Confirmed Visits')
+            ->assertDontSee('Awaiting confirmation')
             ->assertSee('Latest appointments')
             ->assertSee('Alpha Doctor');
+
+        $this->assertSame(
+            [1, 3, 2],
+            $response->viewData('latestAppointments')->pluck('id')->all()
+        );
+    }
+
+    public function test_appointments_default_to_newest_created_and_support_all_sort_options(): void
+    {
+        $admin = $this->createUser('super_admin');
+
+        $this->actingAs($admin)
+            ->get(route('appointments.index'))
+            ->assertOk()
+            ->assertSee('Newest created')
+            ->assertSeeInOrder([self::FIRST_CODE, self::THIRD_CODE, self::SECOND_CODE]);
+
+        $this->get(route('appointments.index', ['sort' => 'created_asc']))
+            ->assertOk()
+            ->assertSeeInOrder([self::SECOND_CODE, self::THIRD_CODE, self::FIRST_CODE]);
+
+        $this->get(route('appointments.index', ['sort' => 'appointment_desc']))
+            ->assertOk()
+            ->assertSeeInOrder([self::THIRD_CODE, self::FIRST_CODE, self::SECOND_CODE]);
+
+        $this->get(route('appointments.index', ['sort' => 'appointment_asc']))
+            ->assertOk()
+            ->assertSeeInOrder([self::SECOND_CODE, self::FIRST_CODE, self::THIRD_CODE]);
+    }
+
+    public function test_invalid_appointment_sort_is_rejected(): void
+    {
+        $this->actingAs($this->createUser('super_admin'))
+            ->get(route('appointments.index', ['sort' => 'invalid']))
+            ->assertSessionHasErrors('sort');
+    }
+
+    public function test_sort_and_filters_are_preserved_in_pagination_links(): void
+    {
+        $appointments = [];
+        for ($id = 4; $id <= 23; $id++) {
+            $appointments[] = [
+                'id' => $id,
+                'doctors_id' => 1,
+                'representative_id' => 1,
+                'company_id' => 1,
+                'date' => now()->toDateString(),
+                'start_time' => '13:00:00',
+                'end_time' => '13:30:00',
+                'status' => 'confirmed',
+                'appointment_code' => sprintf('00000000-0000-0000-0000-%012d', $id),
+                'created_at' => '2026-08-09 10:00:00',
+                'updated_at' => '2026-08-09 10:00:00',
+            ];
+        }
+        DB::table('appointments')->insert($appointments);
+
+        $response = $this->actingAs($this->createUser('super_admin'))
+            ->get(route('appointments.index', [
+                'status' => 'confirmed',
+                'from_date' => now()->toDateString(),
+                'sort' => 'created_asc',
+            ]));
+
+        $response->assertOk();
+        $secondPageUrl = $response->viewData('appointments')->url(2);
+        $this->assertStringContainsString('status=confirmed', $secondPageUrl);
+        $this->assertStringContainsString('from_date='.now()->toDateString(), $secondPageUrl);
+        $this->assertStringContainsString('sort=created_asc', $secondPageUrl);
     }
 
     public function test_status_date_and_search_filters_limit_appointments_and_analytics(): void
@@ -105,6 +192,23 @@ class PlatformAppointmentAnalyticsTest extends TestCase
         $this->assertStringNotContainsString('Alpha Doctor', $content);
     }
 
+    public function test_export_includes_created_time_and_uses_selected_sort_order(): void
+    {
+        $response = $this->actingAs($this->createUser('super_admin'))
+            ->get(route('appointments.export', ['sort' => 'created_asc']));
+
+        $response->assertOk();
+        $content = file_get_contents($response->baseResponse->getFile()->getPathname());
+        $this->assertStringContainsString('Created At', $content);
+        $this->assertStringContainsString('2026-08-09 07:00:00', $content);
+        $this->assertStringContainsString('2026-08-09 08:00:00', $content);
+        $this->assertStringContainsString('2026-08-09 09:00:00', $content);
+        $this->assertTrue(
+            strpos($content, '2026-08-09 07:00:00') < strpos($content, '2026-08-09 08:00:00')
+            && strpos($content, '2026-08-09 08:00:00') < strpos($content, '2026-08-09 09:00:00')
+        );
+    }
+
     private function createUser(string $role): User
     {
         return User::create([
@@ -145,9 +249,9 @@ class PlatformAppointmentAnalyticsTest extends TestCase
                 'start_time' => '10:00:00',
                 'end_time' => '10:30:00',
                 'status' => 'confirmed',
-                'appointment_code' => (string) Str::uuid(),
-                'created_at' => now(),
-                'updated_at' => now(),
+                'appointment_code' => self::FIRST_CODE,
+                'created_at' => '2026-08-09 09:00:00',
+                'updated_at' => '2026-08-09 09:00:00',
             ],
             [
                 'doctors_id' => 1,
@@ -157,9 +261,9 @@ class PlatformAppointmentAnalyticsTest extends TestCase
                 'start_time' => '11:00:00',
                 'end_time' => '11:30:00',
                 'status' => 'cancelled',
-                'appointment_code' => (string) Str::uuid(),
-                'created_at' => now(),
-                'updated_at' => now(),
+                'appointment_code' => self::SECOND_CODE,
+                'created_at' => '2026-08-09 07:00:00',
+                'updated_at' => '2026-08-09 07:00:00',
             ],
             [
                 'doctors_id' => 2,
@@ -169,9 +273,9 @@ class PlatformAppointmentAnalyticsTest extends TestCase
                 'start_time' => '12:00:00',
                 'end_time' => '12:30:00',
                 'status' => 'pending',
-                'appointment_code' => (string) Str::uuid(),
-                'created_at' => now(),
-                'updated_at' => now(),
+                'appointment_code' => self::THIRD_CODE,
+                'created_at' => '2026-08-09 08:00:00',
+                'updated_at' => '2026-08-09 08:00:00',
             ],
         ]);
     }
