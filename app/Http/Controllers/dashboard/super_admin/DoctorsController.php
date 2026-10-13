@@ -16,15 +16,46 @@ class DoctorsController extends Controller
 {
     //
 
-    public function index()
+    public function index(Request $request)
     {
-        $doctors = Doctors::with(['specialty', 'availableTimes'])->latest()->paginate(10);
+        $validated = $request->validate(['search' => ['nullable', 'string', 'max:255']]);
+        $search = trim((string) ($validated['search'] ?? ''));
 
-        // dd($doctors);
+        $doctors = Doctors::with(['specialty', 'availableTimes'])
+            ->when($search !== '', function ($query) use ($search) {
+                $term = '%' . $search . '%';
+
+                $query->where(function ($query) use ($search, $term) {
+                    foreach (['name', 'email', 'phone', 'address_1', 'address_2', 'status', 'from_date', 'to_date', 'created_at'] as $field) {
+                        $query->orWhere($field, 'like', $term);
+                    }
+
+                    $query->orWhereHas('specialty', fn ($specialty) => $specialty->where('name', 'like', $term))
+                        ->orWhereHas('availableTimes', function ($availability) use ($search, $term) {
+                            $availability->where(function ($availability) use ($search, $term) {
+                                foreach (['date', 'start_time', 'end_time', 'status', 'visit_time_type'] as $field) {
+                                    $availability->orWhere($field, 'like', $term);
+                                }
+
+                                if (ctype_digit($search)) {
+                                    $availability->orWhere('max_reps_per_range', (int) $search);
+                                }
+                            });
+                        });
+
+                    if (ctype_digit($search)) {
+                        $query->orWhere('id', (int) $search);
+                    }
+                });
+            })
+            ->latest()
+            ->orderByDesc('id')
+            ->paginate(10)
+            ->withQueryString();
 
         $specialties = Specialty::all();
 
-        return view('dashboard.super_admin.doctors.index', compact('doctors', 'specialties'));
+        return view('dashboard.super_admin.doctors.index', compact('doctors', 'specialties', 'search'));
     }
 
     public function store(Request $request)

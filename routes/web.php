@@ -13,6 +13,7 @@ use App\Http\Controllers\dashboard\super_admin\DoctorsController;
 use App\Http\Controllers\dashboard\super_admin\NotificationBroadcastsController;
 use App\Http\Controllers\dashboard\super_admin\PackagesController;
 use App\Http\Controllers\dashboard\super_admin\PendingRepresentativesController;
+use App\Http\Controllers\dashboard\super_admin\RepresentativesController as SuperadminRepresentativesController;
 use App\Http\Controllers\dashboard\super_admin\SpecialitiesController;
 use App\Http\Controllers\dashboard\super_admin\SpecialtiesController;
 use App\Http\Controllers\dashboard\super_admin\SuperadminController;
@@ -49,6 +50,7 @@ Route::middleware(['auth', 'role:super_admin'])->group(function () {
         Route::get('dashboard', [SuperadminController::class, 'index'])->name('superadmin.dashboard');
         Route::get('appointments', [AppointmentsController::class, 'index'])->name('appointments.index');
         Route::get('appointments/export', [AppointmentsController::class, 'export'])->name('appointments.export');
+        Route::get('representatives', [SuperadminRepresentativesController::class, 'index'])->name('superadmin.representatives.index');
         Route::post('logout', [AuthController::class, 'logout'])->name('logout');
         Route::post('email-feedback', [SuperadminController::class, 'storeEmailFedback'])->name('superadmin.email.feedback');
 

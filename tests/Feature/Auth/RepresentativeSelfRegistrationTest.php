@@ -2,16 +2,19 @@
 
 namespace Tests\Feature\Auth;
 
+use App\Events\SendNotificationEvent;
 use App\Http\Resources\AppointmentsResource;
 use App\Imports\RepCompanyCatalogImport;
 use App\Models\Appointment;
 use App\Models\Company;
+use App\Models\DoctorAvailability;
 use App\Models\Doctors;
 use App\Models\RepCompanyCatalog;
 use App\Models\Representative;
 use App\Models\Specialty;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Collection;
@@ -135,7 +138,7 @@ class RepresentativeSelfRegistrationTest extends TestCase
         );
     }
 
-    public function test_other_company_registration_creates_pending_representative_with_read_only_access(): void
+    public function test_other_company_registration_is_active_and_can_use_protected_actions(): void
     {
         $specialty = Specialty::create(['name' => 'Cardiology']);
         $doctor = Doctors::create([
@@ -147,7 +150,7 @@ class RepresentativeSelfRegistrationTest extends TestCase
             'status' => 'active',
         ]);
 
-        $this->postJson('/api/reps/register', [
+        $registrationResponse = $this->postJson('/api/reps/register', [
             'name' => 'Other Rep',
             'email' => 'other-rep@example.com',
             'phone' => '01000000222',
@@ -157,13 +160,28 @@ class RepresentativeSelfRegistrationTest extends TestCase
             'requested_line_name' => 'Line B',
             'requested_area_names' => ['Giza', 'October'],
         ])->assertStatus(201)
-            ->assertJsonPath('data.registration_status', 'pending')
+            ->assertJsonPath('data.registration_status', 'active')
             ->assertJsonPath('data.requested_line_name', 'Line B')
             ->assertJsonPath('data.work_areas.0', 'Giza')
             ->assertJsonPath('data.work_areas.1', 'October')
             ->assertJsonPath('data.work_lines.0', 'Line B')
-            ->assertJsonPath('data.can_book', false)
-            ->assertJsonPath('data.company.type', 'requested');
+            ->assertJsonPath('data.can_book', true)
+            ->assertJsonPath('data.requires_company_approval', false)
+            ->assertJsonPath('data.daily_visits_limit', 10)
+            ->assertJsonPath('data.company.type', 'catalog')
+            ->assertJsonPath('data.company.name', 'Missing Pharma');
+
+        $catalogId = $registrationResponse->json('data.company.id');
+        $this->assertDatabaseHas('representatives', [
+            'email' => 'other-rep@example.com',
+            'company_catalog_id' => $catalogId,
+            'requested_company_name' => null,
+            'registration_status' => 'active',
+            'daily_visits_limit' => 10,
+        ]);
+        $this->getJson('/api/reps/companies?search=Missing%20Pharma')
+            ->assertStatus(200)
+            ->assertJsonPath('data.0.id', $catalogId);
 
         $loginResponse = $this->postJson('/api/reps/login', [
             'email' => 'other-rep@example.com',
@@ -172,20 +190,20 @@ class RepresentativeSelfRegistrationTest extends TestCase
         ]);
 
         $loginResponse->assertStatus(200)
-            ->assertJsonPath('data.registration_status', 'pending')
-            ->assertJsonPath('data.can_book', false)
+            ->assertJsonPath('data.registration_status', 'active')
+            ->assertJsonPath('data.can_book', true)
+            ->assertJsonPath('data.requires_company_approval', false)
             ->assertJsonPath('data.representative.requested_line_name', 'Line B')
             ->assertJsonPath('data.representative.work_areas.0', 'Giza')
             ->assertJsonPath('data.representative.work_areas.1', 'October')
-            ->assertJsonPath('data.representative.work_lines.0', 'Line B')
-            ->assertJsonPath('data.error_code', 'REP_PENDING_APPROVAL');
+            ->assertJsonPath('data.representative.work_lines.0', 'Line B');
 
         $token = $loginResponse->json('data.token');
 
         $this->withHeader('Authorization', 'Bearer ' . $token)
             ->getJson('/api/reps/profile')
             ->assertStatus(200)
-            ->assertJsonPath('data.registration_status', 'pending')
+            ->assertJsonPath('data.registration_status', 'active')
             ->assertJsonPath('data.requested_line_name', 'Line B')
             ->assertJsonPath('data.work_areas.0', 'Giza')
             ->assertJsonPath('data.work_areas.1', 'October')
@@ -205,33 +223,101 @@ class RepresentativeSelfRegistrationTest extends TestCase
 
         $this->withHeader('Authorization', 'Bearer ' . $token)
             ->getJson('/api/reps/visits/balance')
-            ->assertStatus(200);
-
-        $this->withHeader('Authorization', 'Bearer ' . $token)
-            ->postJson('/api/reps/booking', [
-                'doctors_id' => $doctor->id,
-                'date' => now()->addDay()->toDateString(),
-                'start_time' => '10:00',
-            ])
-            ->assertStatus(403)
-            ->assertJsonPath('data.error_code', 'REP_PENDING_APPROVAL');
-
-        $this->withHeader('Authorization', 'Bearer ' . $token)
-            ->putJson('/api/reps/cancel-appointment/1')
-            ->assertStatus(403)
-            ->assertJsonPath('data.error_code', 'REP_PENDING_APPROVAL');
+            ->assertStatus(200)
+            ->assertJsonPath('data.daily_visits_limit', 10);
 
         $this->withHeader('Authorization', 'Bearer ' . $token)
             ->postJson('/api/reps/add-favorite-doctor', [
                 'doctor_id' => $doctor->id,
             ])
-            ->assertStatus(403)
-            ->assertJsonPath('data.error_code', 'REP_PENDING_APPROVAL');
+            ->assertStatus(200);
+
+        $this->assertDatabaseHas('doctor_representative_favorite', [
+            'doctors_id' => $doctor->id,
+            'representative_id' => Representative::where('email', 'other-rep@example.com')->value('id'),
+        ]);
+
+        Event::fake([SendNotificationEvent::class]);
+        $bookingDate = now('Africa/Cairo')->addDays(2)->toDateString();
+        $availability = DoctorAvailability::create([
+            'doctors_id' => $doctor->id,
+            'date' => $bookingDate,
+            'start_time' => '10:00:00',
+            'end_time' => '11:00:00',
+            'status' => 'available',
+        ]);
 
         $this->withHeader('Authorization', 'Bearer ' . $token)
-            ->putJson('/api/reps/notifications/read')
-            ->assertStatus(403)
-            ->assertJsonPath('data.error_code', 'REP_PENDING_APPROVAL');
+            ->postJson('/api/reps/booking', [
+                'doctors_id' => $doctor->id,
+                'date' => $bookingDate,
+                'available_time_id' => $availability->id,
+            ])
+            ->assertStatus(201)
+            ->assertJsonPath('data.company.id', $catalogId)
+            ->assertJsonPath('data.company.name', 'Missing Pharma');
+
+        $this->assertDatabaseHas('appointments', [
+            'representative_id' => Representative::where('email', 'other-rep@example.com')->value('id'),
+            'company_catalog_id' => $catalogId,
+        ]);
+    }
+
+    public function test_typed_company_registration_reuses_normalized_catalog_entry(): void
+    {
+        $catalog = RepCompanyCatalog::create([
+            'name' => 'Missing Pharma',
+            'normalized_name' => 'MISSING PHARMA',
+            'status' => 'inactive',
+        ]);
+
+        $this->postJson('/api/reps/register', [
+            'name' => 'Second Rep',
+            'email' => 'second-rep@example.com',
+            'phone' => '01000000223',
+            'password' => 'password123',
+            'password_confirmation' => 'password123',
+            'requested_company_name' => '  missing   pharma ',
+            'requested_line_name' => 'Line C',
+        ])->assertStatus(201)
+            ->assertJsonPath('data.company.id', $catalog->id)
+            ->assertJsonPath('data.can_book', true);
+
+        $this->assertSame(1, RepCompanyCatalog::count());
+        $this->assertSame('active', $catalog->fresh()->status);
+    }
+
+    public function test_pending_representatives_migration_activates_only_pending_accounts(): void
+    {
+        $pending = Representative::create([
+            'name' => 'Pending Rep',
+            'email' => 'pending-rep@example.com',
+            'phone' => '01000000224',
+            'password' => Hash::make('password123'),
+            'requested_company_name' => 'New Pharma',
+            'registration_status' => 'pending',
+            'status' => 'active',
+        ]);
+        $rejected = Representative::create([
+            'name' => 'Rejected Rep',
+            'email' => 'rejected-rep@example.com',
+            'phone' => '01000000225',
+            'password' => Hash::make('password123'),
+            'requested_company_name' => 'Rejected Pharma',
+            'registration_status' => 'rejected',
+            'status' => 'active',
+        ]);
+
+        $migration = require database_path('migrations/2026_10_13_000000_activate_pending_representatives.php');
+        $migration->up();
+
+        $pending->refresh();
+        $this->assertSame('active', $pending->registration_status);
+        $this->assertSame(10, $pending->daily_visits_limit);
+        $this->assertNull($pending->requested_company_name);
+        $this->assertSame('New Pharma', $pending->companyCatalog->name);
+        $this->assertSame('rejected', $rejected->fresh()->registration_status);
+        $this->assertSame(1, RepCompanyCatalog::count());
     }
 
     public function test_registration_rejects_duplicate_and_invalid_company_payloads(): void
