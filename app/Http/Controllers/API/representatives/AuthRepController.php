@@ -8,9 +8,11 @@ use App\Http\Requests\RepRegisterRequest;
 use App\Http\Resources\RepsResource;
 use App\Models\Appointment;
 use App\Models\Company;
+use App\Models\RepCompanyCatalog;
 use App\Models\Representative;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 
@@ -21,31 +23,45 @@ class AuthRepController extends Controller
     public function register(RepRegisterRequest $request)
     {
         $data = $request->validated();
-        $isCatalogCompany = !empty($data['company_catalog_id']);
+        $representative = DB::transaction(function () use ($data) {
+            $catalogId = $data['company_catalog_id'] ?? null;
 
-        $representative = Representative::create([
-            'name' => $data['name'],
-            'email' => $data['email'],
-            'phone' => $data['phone'],
-            'password' => Hash::make($data['password']),
-            'company_id' => null,
-            'company_catalog_id' => $data['company_catalog_id'] ?? null,
-            'requested_company_name' => $data['requested_company_name'] ?? null,
-            'requested_line_name' => $data['requested_line_name'],
-            'requested_area_names' => $data['requested_area_names'] ?? [],
-            'registration_status' => $isCatalogCompany ? 'active' : 'pending',
-            'daily_visits_limit' => $isCatalogCompany ? config('reps.self_registered_daily_visits_limit') : null,
-            'status' => 'active',
-            'fcm_token' => $data['fcm_token'] ?? null,
-        ]);
+            if (!$catalogId) {
+                $companyName = trim($data['requested_company_name']);
+                $catalog = RepCompanyCatalog::firstOrCreate(
+                    ['normalized_name' => RepCompanyCatalog::normalizeName($companyName)],
+                    ['name' => $companyName, 'status' => 'active']
+                );
+
+                if ($catalog->status !== 'active') {
+                    $catalog->update(['status' => 'active']);
+                }
+
+                $catalogId = $catalog->id;
+            }
+
+            return Representative::create([
+                'name' => $data['name'],
+                'email' => $data['email'],
+                'phone' => $data['phone'],
+                'password' => Hash::make($data['password']),
+                'company_id' => null,
+                'company_catalog_id' => $catalogId,
+                'requested_company_name' => null,
+                'requested_line_name' => $data['requested_line_name'],
+                'requested_area_names' => $data['requested_area_names'] ?? [],
+                'registration_status' => 'active',
+                'daily_visits_limit' => config('reps.self_registered_daily_visits_limit'),
+                'status' => 'active',
+                'fcm_token' => $data['fcm_token'] ?? null,
+            ]);
+        });
 
         $representative->load(['company', 'companyCatalog', 'areas', 'lines']);
 
         return ApiResponse::sendResponse(
             201,
-            $isCatalogCompany
-                ? 'Representative registered successfully'
-                : 'Representative registered and pending company approval',
+            'Representative registered successfully',
             new RepsResource($representative)
         );
     }

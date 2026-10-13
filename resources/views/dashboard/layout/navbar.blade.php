@@ -49,9 +49,9 @@
                         </a>
                     </li>
                     <li class="pc-item">
-                        <a href="{{ route('pending-representatives.index') }}" class="pc-link">
-                            <span class="pc-micon"><i class="ti ti-user-check"></i></span>
-                            <span class="pc-mtext">Pending Reps</span>
+                        <a href="{{ route('superadmin.representatives.index') }}" class="pc-link">
+                            <span class="pc-micon"><i class="ti ti-users"></i></span>
+                            <span class="pc-mtext">Representatives</span>
                         </a>
                     </li>
                     <li class="pc-item">

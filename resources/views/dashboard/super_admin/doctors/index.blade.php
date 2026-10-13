@@ -23,6 +23,25 @@
         </div>
         <!-- [ breadcrumb ] end -->
 
+        <div class="card mb-4">
+            <div class="card-body">
+                <form method="GET" action="{{ route('doctors.index') }}" class="row g-3 align-items-end">
+                    <div class="col-md-9">
+                        <label for="search" class="form-label">Search doctors</label>
+                        <input type="search" class="form-control" id="search" name="search" value="{{ $search }}"
+                            placeholder="Name, email, phone, specialty, address, status or availability">
+                    </div>
+                    <div class="col-md-3 d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">Search</button>
+                        <a href="{{ route('doctors.index') }}" class="btn btn-light-secondary">Clear</a>
+                    </div>
+                </form>
+                @error('search')
+                    <div class="text-danger small mt-2">{{ $message }}</div>
+                @enderror
+            </div>
+        </div>
+
         <!-- [ Main Content ] start -->
         <div class="row">
             <!-- [ sample-page ] start -->
@@ -115,6 +134,11 @@
                                                     @include('dashboard.super_admin.doctors.editModal', ['doctor' => $doctor])
                                                     @include('dashboard.super_admin.doctors.deleteModal', ['doctor' => $doctor])
                                                 @empty
+                                                    <tr>
+                                                        <td colspan="8" class="text-center py-4">
+                                                            {{ $search !== '' ? 'No doctors match your search.' : 'No doctors found.' }}
+                                                        </td>
+                                                    </tr>
                                                 @endforelse
                                             @endisset
 
